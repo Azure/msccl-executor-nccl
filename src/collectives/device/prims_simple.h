@@ -298,19 +298,19 @@ template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
         nsrcs++;
         if (MULTISRCS){
           ReduceOrCopyMulti<Unroll, RedOp, T, 3, MSCCL_MAX_REDUCE_FUSION, 1, 1, 0>
-            (tid, nworkers, ncclShmem.redOpArgs, false, nsrcs, (T const**)srcs, 1, (T**)dsts, nelem);
+            (tid, nworkers, ncclShmem.redOpArgs[0], nullptr, false, nsrcs, (void**)srcs, 1, (void**)dsts, nelem);
         } else {
           ReduceOrCopyMulti<Unroll, RedOp, T, 2, 2, 1, 1, 0>
-            (tid, nworkers, ncclShmem.redOpArgs, false, 2, (T const**)srcs, 1, (T**)dsts, nelem);
+            (tid, nworkers, ncclShmem.redOpArgs[0], nullptr, false, 2, (void**)srcs, 1, (void**)dsts, nelem);
         }
       }
       if (COPY){
         ReduceOrCopyMulti<Unroll, RedOp, T, 1, 1, 1, 1, 0>
-          (tid, nworkers, ncclShmem.redOpArgs, false, 1, (T const**)srcs, 1, (T**)dsts, nelem);
+          (tid, nworkers, ncclShmem.redOpArgs[0], nullptr, false, 1, (void**)srcs, 1, (void**)dsts, nelem);
         if (MULTISRCS) {
           for (int i = 1; i < nsrcs; i++){
             ReduceOrCopyMulti<Unroll, RedOp, T, 1, 1, 1, 1, 0>
-              (tid, nworkers, ncclShmem.redOpArgs, false, 1, (T const**)&srcs[i], 1, (T**)&dsts[i], nelem);
+              (tid, nworkers, ncclShmem.redOpArgs[0], nullptr, false, 1, (void**)&srcs[i], 1, (void**)&dsts[i], nelem);
           }
         }
       }

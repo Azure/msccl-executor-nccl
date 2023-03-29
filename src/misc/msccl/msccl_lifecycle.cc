@@ -22,14 +22,14 @@
 #include "msccl/msccl_setup.h"
 #include "msccl/msccl_status.h"
 
-RCCL_PARAM(MscclEnabled, "MSCCL_ENABLE", 1);
+NCCL_PARAM(MscclEnabled, "MSCCL_ENABLE", 1);
 static const char* mscclAlgoFilePathEnv = "MSCCL_ALGO_FILE_PATH";
 static std::atomic<bool> mscclInitialized;
 static bool mscclSchedulerTriedLoadAlgo = false;
 static std::mutex mscclLifecycleMutex;
 
 bool mscclEnabled() {
-  return rcclParamMscclEnabled();
+  return ncclParamMscclEnabled();
 }
 
 void mscclSetIsCallerFlag() {
@@ -249,7 +249,7 @@ static ncclResult_t mscclSetSavedSchedulerParam(
   const void* sendBuff, const size_t sendCounts[], const size_t sDisPls[],
   void* recvBuff, const size_t recvCounts[], const size_t rDisPls[],
   size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
-  mscclFunc_t func, ncclComm_t comm, hipStream_t stream,
+  mscclFunc_t func, ncclComm_t comm, cudaStream_t stream,
   struct mscclSavedSchedulerParam* param) {
   param->p.sendBuff = sendBuff;
   param->p.sendCounts = sendCounts;
@@ -329,24 +329,6 @@ static ncclResult_t mscclFallBackSavedParams() {
         NCCLCHECK(ncclRecv(param.p.recvBuff, param.p.count, param.p.dataType,
           param.p.peer, param.comm, param.stream));
         break;
-      case mscclFuncGather:
-        NCCLCHECK(ncclGather(param.p.sendBuff, param.p.recvBuff, param.p.count, param.p.dataType,
-          param.p.root, param.comm, param.stream));
-        break;
-      case mscclFuncScatter:
-        NCCLCHECK(ncclScatter(param.p.sendBuff, param.p.recvBuff, param.p.count, param.p.dataType,
-          param.p.root, param.comm, param.stream));
-        break;
-      case mscclFuncAllToAll:
-        NCCLCHECK(ncclAllToAll(param.p.sendBuff, param.p.recvBuff, param.p.count, param.p.dataType,
-          param.comm, param.stream));
-        break;
-      case mscclFuncAllToAllv:
-        NCCLCHECK(ncclAllToAllv(
-          param.p.sendBuff, param.p.sendCounts, param.p.sDisPls,
-          param.p.recvBuff, param.p.recvCounts, param.p.rDisPls,
-          param.p.dataType, param.comm, param.stream));
-        break;
       default:
         WARN("Invalid MSCCL function type in saved parameter");
         return ncclInvalidUsage;
@@ -361,9 +343,9 @@ ncclResult_t mscclEnqueueCheck(
     const void* sendBuff, const size_t sendCounts[], const size_t sDisPls[],
     void* recvBuff, const size_t recvCounts[], const size_t rDisPls[],
     size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
-    mscclFunc_t func, ncclComm_t comm, hipStream_t stream) {
+    mscclFunc_t func, ncclComm_t comm, cudaStream_t stream) {
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
-  hipStreamCaptureStatus captureStatus;
+  cudaStreamCaptureStatus captureStatus;
   unsigned long long pid;
 
   threadLocalStatus.savedSchedulerParams.push_back({});
@@ -375,8 +357,8 @@ ncclResult_t mscclEnqueueCheck(
   switch (threadLocalStatus.groupStatus) {
     case mscclNoGroup:
       if (comm->mscclCompatible) {
-        CUDACHECK(hipStreamGetCaptureInfo(stream, &captureStatus, &pid));
-        if (captureStatus == hipStreamCaptureStatusNone) {
+        CUDACHECK(cudaStreamGetCaptureInfo(stream, &captureStatus, &pid));
+        if (captureStatus == cudaStreamCaptureStatusNone) {
             NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
             if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
               NCCLCHECK(mscclRunSavedParams());
@@ -388,8 +370,8 @@ ncclResult_t mscclEnqueueCheck(
       break;
     case mscclGroupSupportedOp:
       if (comm->mscclCompatible) {
-        CUDACHECK(hipStreamGetCaptureInfo(stream, &captureStatus, &pid));
-        if (captureStatus == hipStreamCaptureStatusNone) {
+        CUDACHECK(cudaStreamGetCaptureInfo(stream, &captureStatus, &pid));
+        if (captureStatus == cudaStreamCaptureStatusNone) {
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
             // Only save counts and displs when there is suitable MSCCL algorithm for this
@@ -453,10 +435,10 @@ ncclResult_t mscclTeardown() {
     status.freeAlgoHandles.push_back(p.first);
   }
   for (auto &p : status.devAlgos) {
-    CUDACHECK(hipFree(p.second));
+    CUDACHECK(cudaFree(p.second));
   }
-  CUDACHECK(hipFree(status.scratchBuffer));
-  CUDACHECK(hipFree(status.syncFlags));
+  CUDACHECK(cudaFree(status.scratchBuffer));
+  CUDACHECK(cudaFree(status.syncFlags));
   status.hostAlgos.clear();
   status.devAlgos.clear();
   status.freeAlgoHandles.clear();

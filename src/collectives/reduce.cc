@@ -32,7 +32,7 @@ ncclResult_t ncclReduce(const void* sendbuff, void* recvbuff, size_t count,
   if (mscclAvailable() && !mscclIsCaller()) {
     return mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
-      count, datatype, 0, 0, ncclSum, mscclFuncAllToAll, comm, stream);
+      count, datatype, root, 0, op, mscclFuncReduce, comm, stream);
   }
 
   struct ncclInfo info = { ncclFuncReduce, "Reduce",

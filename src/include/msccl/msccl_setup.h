@@ -6,8 +6,6 @@
 #ifndef MSCCL_SETUP_H_
 #define MSCCL_SETUP_H_
 
-#include <hip/hip_runtime.h>
-
 #include "comm.h"
 #include "msccl/msccl_struct.h"
 

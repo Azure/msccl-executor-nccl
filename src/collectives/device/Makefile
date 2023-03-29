@@ -10,7 +10,8 @@ include ../../../makefiles/version.mk
 BUILDDIR ?= $(abspath ../../../build)
 OBJDIR := $(BUILDDIR)/obj/collectives/device
 
-LIBSRCFILES := all_reduce.cu broadcast.cu reduce.cu all_gather.cu reduce_scatter.cu sendrecv.cu onerank_reduce.cu
+LIBSRCFILES := all_reduce.cu broadcast.cu reduce.cu all_gather.cu reduce_scatter.cu sendrecv.cu onerank_reduce.cu 
+# msccl_kernel.cu
 
 LIBSRCFILES += functions.cu
 
@@ -20,6 +21,7 @@ STATICLIB  := $(OBJDIR)/colldevice.a
 DEVOBJ     := $(OBJDIR)/devlink.o
 RULESFILE  := $(OBJDIR)/Makefile.rules
 
+# NVCUFLAGS  += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl --compiler-options "-fPIC -fvisibility=hidden"
 NVCUFLAGS  += -I. -I.. -I$(BUILDDIR)/include -I../../include --compiler-options "-fPIC -fvisibility=hidden"
 
 
@@ -36,7 +38,7 @@ $(RULESFILE) : gen_rules.sh
 
 -include $(RULESFILE)
 
-LIBOBJ     := $(GENOBJS) $(OBJDIR)/functions.o $(OBJDIR)/onerank_reduce.o
+LIBOBJ     := $(GENOBJS) $(OBJDIR)/functions.o $(OBJDIR)/onerank_reduce.o $(OBJDIR)/msccl_kernel.o   
 
 -include $(DEPFILES)
 
@@ -64,6 +66,11 @@ $(OBJDIR)/functions.o : functions.cu $(OBJDIR)/functions.dep
 	$(NVCC) $(NVCUFLAGS) -dc $< -o $@
 
 $(OBJDIR)/onerank_reduce.o : onerank_reduce.cu $(OBJDIR)/onerank_reduce.dep
+	@printf "Compiling  %-35s > %s\n" $< $@
+	mkdir -p `dirname $@`
+	$(NVCC) $(NVCUFLAGS) -dc $< -o $@
+
+$(OBJDIR)/msccl_kernel.o : msccl_kernel.cu $(OBJDIR)/msccl_kernel.dep
 	@printf "Compiling  %-35s > %s\n" $< $@
 	mkdir -p `dirname $@`
 	$(NVCC) $(NVCUFLAGS) -dc $< -o $@

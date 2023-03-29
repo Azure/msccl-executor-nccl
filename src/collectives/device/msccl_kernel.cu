@@ -1,11 +1,9 @@
 /*************************************************************************
  * Copyright (c) 2017-2022, NVIDIA CORPORATION. All rights reserved.
- * Modifications Copyright (c) 2019-2022 Advanced Micro Devices, Inc. All rights reserved.
  * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
-
 #include "devcomm.h"
 #include "primitives.h"
 #include "collectives.h"
@@ -31,16 +29,7 @@ __device__ static U load(U *src) {
     uint32_t u4;
     uint64_t u8;
   };
-#if defined(__HIP_PLATFORM_HCC__) || defined(__HCC__) || defined(__HIPCC__)
-  if(sizeof(U) == 1)
-    u1 = __builtin_nontemporal_load((uint8_t*)src);
-  else if(sizeof(U) == 2)
-    u2 = __builtin_nontemporal_load((uint16_t*)src);
-  else if(sizeof(U) == 4)
-    u4 = __builtin_nontemporal_load((uint32_t*)src);
-  else
-    u8 = __builtin_nontemporal_load((uint64_t*)src);
-#else
+
   if(sizeof(U) == 1)
     asm("ld.volatile.global.b8 %0,[%1];" : "=r"(u4) : "l"(src));
   else if(sizeof(U) == 2)
@@ -49,7 +38,6 @@ __device__ static U load(U *src) {
     asm("ld.volatile.global.b32 %0,[%1];" : "=r"(u4) : "l"(src));
   else
     asm("ld.volatile.global.b64 %0,[%1];" : "=l"(u8) : "l"(src));
-#endif
   return elt;
 }
 
@@ -62,17 +50,8 @@ __device__ static void store(U *dst, U val) {
     uint32_t u4;
     uint64_t u8;
   };
+
   elt = val;
-#if defined(__HIP_PLATFORM_HCC__) || defined(__HCC__) || defined(__HIPCC__)
-  if(sizeof(U) == 1)
-    __builtin_nontemporal_store(u1, (uint8_t*)dst);
-  else if(sizeof(U) == 2)
-    __builtin_nontemporal_store(u2, (uint16_t*)dst);
-  else if(sizeof(U) == 4)
-    __builtin_nontemporal_store(u4, (uint32_t*)dst);
-  else
-    __builtin_nontemporal_store(u8, (uint64_t*)dst);
-#else
   if(sizeof(U) == 1)
     asm("st.volatile.global.b8 [%0],%1;" :: "l"(dst), "r"(u4));
   else if(sizeof(U) == 2)
@@ -81,16 +60,10 @@ __device__ static void store(U *dst, U val) {
     asm("st.volatile.global.b32 [%0],%1;" :: "l"(dst), "r"(u4));
   else
     asm("st.volatile.global.b64 [%0],%1;" :: "l"(dst), "l"(u8));
-#endif
 }
 
-inline __device__ static void barrier(int nthreads, uint64_t* barrier_next, uint64_t* barriers) {
-#if defined(__HIP_PLATFORM_HCC__) || defined(__HCC__) || defined(__HIPCC__)
-  if (nthreads != WARP_SIZE)
-    barrier_by_group();
-#else
-  asm volatile ("bar.sync %1, %0;" :: "r"(nthreads), "r"(15));
-#endif
+inline __device__ static void barrier(int nthreads) {
+    asm volatile ("bar.sync %1, %0;" :: "r"(nthreads), "r"(15));
 }
 
 // Copy 8-byte aligned data. You must call with at least `(bytes+7)/8` threads.
@@ -114,7 +87,7 @@ __device__ __forceinline__ static void threadBlockCopy(
 for (int r = 0; r < numloops; r++) { \
   srcOffset = srcBaseOffset + (ssize_t)mscclShmem.mscclTB.reductionSrcOffsets[t->reductionPointer+r] * sizePerMscclChunk; \
   reduceInput = load(srcPointer + srcOffset); \
-  o = redFn(reduceInput, o); \
+  o = applyReduce(redFn, reduceInput, o);  \
 }
 
 #define MSCCL_REDUCE_UNROLL_LOOP_B(numloops) \
@@ -130,21 +103,11 @@ __device__ __forceinline__ void mscclRunInterpreter(
   const int bid = blockIdx.x;
   const int nthreads = NCCL_MAX_NTHREADS;
 
-  // initialize barriers
-  if (tid == 0) {
-    for (auto i = 0; i < NCCL_MAX_GROUPS; i++) {
-      ncclShmem.groups[i].barrier = 0;
-      for (auto j = 0; j < NCCL_MAX_GROUPS; j++) ncclShmem.groups[i].barrier_next[j] = 0;
-    }
-  }
-  uint64_t* mscclBarrierNext = ncclShmem.groups[0].barrier_next;
-  uint64_t* mscclBarriers = &ncclShmem.groups[0].barrier;
-
   // initialize mscclShmem.mscclTB
   threadBlockCopy(
     (uint64_t *)&mscclShmem.mscclTB, (uint64_t *)(algo->mscclTBs + bid),
     sizeof(struct mscclThreadBlock), tid, nthreads);
-  __synclds(); // publish mscclShmem.mscclTB.channelId
+  __syncthreads(); // publish mscclShmem.mscclTB.channelId
 
   // initialize ncclShmem and mscclShmem.work
   int channelId = mscclShmem.mscclTB.channelId;
@@ -181,7 +144,7 @@ __device__ __forceinline__ void mscclRunInterpreter(
     }
     copyToShmem8(tid%WARP_SIZE, dst, src, bytes);
   }
-  __synclds(); // publish shmem
+  __syncthreads(); // publish shmem
 
   // Deference reduce args if required
   if (tid == 0 && mscclShmem.work.hasReduce && mscclShmem.work.redOpArgIsPtr) {
@@ -202,7 +165,7 @@ __device__ __forceinline__ void mscclRunInterpreter(
         break;
     }
   }
-  __synclds(); // publish shmem
+  __syncthreads(); // publish shmem
 
   // User pointers for primitives
   T* thisInput = (T*)mscclShmem.work.sendBuff;
@@ -258,7 +221,7 @@ __device__ __forceinline__ void mscclRunInterpreter(
           while ((mscclFlags + dependentBid)->flag < goalFlag);
         }
         step += numDependencies-1;
-        barrier(nthreads, mscclBarrierNext, mscclBarriers);
+        barrier(nthreads);
       }
 
       srcPointer = (t->srcBuffer == MSCCL_INPUT_BUFFER) ? thisInput : ((t->srcBuffer == MSCCL_OUTPUT_BUFFER) ? thisOutput : thisScratch);
@@ -282,150 +245,25 @@ __device__ __forceinline__ void mscclRunInterpreter(
               T* dstIndex = dstPointer + dstOffset + tid;
               T reduceInput;
               T o = load(dstIndex);
-               ssize_t srcBaseOffset = gridOffset + (ssize_t)c * sizePerMscclChunk + tid;
-              switch (numReductions) {
-                case 1:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(1);
-                  break;
-                case 2:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(2);
-                  break;
-                case 3:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(3);
-                  break;
-                case 4:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(4);
-                  break;
-                case 5:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(5);
-                  break;
-                case 6:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(6);
-                  break;
-                case 7:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(7);
-                  break;
-                case 8:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(8);
-                  break;
-                case 9:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(9);
-                  break;
-                case 10:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(10);
-                  break;
-                case 11:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(11);
-                  break;
-                case 12:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(12);
-                  break;
-                case 13:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(13);
-                  break;
-                case 14:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(14);
-                  break;
-                case 15:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(15);
-                  break;
-                case 16:
-                  #pragma unroll
-                  MSCCL_REDUCE_UNROLL_LOOP_A(16);
-                  break;
-                default:
-                  break;
+              ssize_t srcBaseOffset = gridOffset + (ssize_t)c * sizePerMscclChunk + tid;
+              for (int r = 0; r < numReductions; r++){
+                ssize_t srcOffset = srcBaseOffset + (ssize_t) (t->srcOffset+r) * sizePerMscclChunk;
+                T* srcIndex = srcPointer + srcOffset;
+                reduceInput = load(srcIndex);
+                o = applyReduce(redFn, reduceInput, o);
               }
               store(dstIndex, o);
             }
-            barrier(nthreads, mscclBarrierNext, mscclBarriers);
+            barrier(nthreads);
           } else {
             T* srcs[MSCCL_MAX_REDUCE_FUSION+1]; // +1 is for SIMPLE protocol as dst is added in the list of srcs
             dstOffset = gridOffset + (ssize_t) (t->dstOffset+c) * sizePerMscclChunk;
             T* dst = dstPointer + dstOffset;
             ssize_t srcBaseOffset = gridOffset + (ssize_t)c * sizePerMscclChunk;
-            switch (numReductions) {
-              case 1:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(1);
-                break;
-              case 2:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(2);
-                break;
-              case 3:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(3);
-                break;
-              case 4:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(4);
-                break;
-              case 5:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(5);
-                break;
-              case 6:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(6);
-                break;
-              case 7:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(7);
-                break;
-              case 8:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(8);
-                break;
-              case 9:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(9);
-                break;
-              case 10:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(10);
-                break;
-              case 11:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(11);
-                break;
-              case 12:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(12);
-                break;
-              case 13:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(13);
-                break;
-              case 14:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(14);
-                break;
-              case 15:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(15);
-                break;
-              case 16:
-                #pragma unroll
-                MSCCL_REDUCE_UNROLL_LOOP_B(16);
-                break;
-              default:
-                break;
+            for (int r = 0; r < numReductions; r++){
+              ssize_t srcOffset = srcBaseOffset + (ssize_t) (t->srcOffset+r) * sizePerMscclChunk;
+              T* src = srcPointer + srcOffset;
+              srcs[r] = src;
             }
             prims.reduce(srcs, numReductions, &dst, 1, thisNelem);
           }
@@ -472,7 +310,7 @@ __global__ void MSCCL_KERNEL_ENTRY_NAME(devredop, type, Simple)(struct ncclDevCo
   MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, half) \
   MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, float) \
   MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, double) \
-  MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, rccl_bfloat16)
+  MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, __nv_bfloat16)
 
 #define MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_NOFLOAT(devredop) \
   MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, int8_t) \

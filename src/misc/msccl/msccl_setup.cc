@@ -35,22 +35,22 @@ ncclResult_t mscclSetupCount(struct mscclAlgo* hostAlgo, ncclComm_t comm, size_t
   return ncclSuccess;
 }
 
-ncclResult_t mscclSetupScratch(struct mscclAlgo* hostAlgo, hipStream_t stream) {
+ncclResult_t mscclSetupScratch(struct mscclAlgo* hostAlgo, cudaStream_t stream) {
   mscclStatus& status = mscclGetStatus();
   size_t sizeNeeded = (status.nBytes * (size_t)(hostAlgo->nScratchChunks)) / (size_t)(hostAlgo->nChunksPerLoop);
   if (sizeNeeded > status.scratchBufferSize){
-    CUDACHECK(hipStreamSynchronize(stream));
-    CUDACHECK(hipFree(status.scratchBuffer));
+    CUDACHECK(cudaStreamSynchronize(stream));
+    CUDACHECK(cudaFree(status.scratchBuffer));
     NCCLCHECK(ncclCudaCalloc((char**)&status.scratchBuffer, sizeNeeded));
     status.scratchBufferSize = sizeNeeded;
   }
   return ncclSuccess;
 }
 
-ncclResult_t mscclSetupSyncFlags(hipStream_t stream) {
+ncclResult_t mscclSetupSyncFlags(cudaStream_t stream) {
   mscclStatus& status = mscclGetStatus();
   if (status.workIndex > (1ULL << (8*sizeof(status.workIndex))) - 2 * NCCL_MAX_OPS - 1) {
-    CUDACHECK(hipMemsetAsync(status.syncFlags, 0, sizeof(struct mscclFlag) * MSCCL_MAX_NUM_THREAD_BLOCKS, stream));
+    CUDACHECK(cudaMemsetAsync(status.syncFlags, 0, sizeof(struct mscclFlag) * MSCCL_MAX_NUM_THREAD_BLOCKS, stream));
     status.workIndex = 1; // setting the workIndex back to 1 for next iterations
   }
   return ncclSuccess;
@@ -91,7 +91,7 @@ ncclResult_t mscclSetupConnections(struct mscclAlgo* hostAlgo, ncclComm_t comm) 
 ncclResult_t mscclSetupProxy(struct mscclAlgo* hostAlgo, ncclComm_t comm) {
   mscclStatus& status = mscclGetStatus();
   struct ncclProxyOp proxyOp = {};
-  proxyOp.connIndex = 0;
+  // proxyOp.connIndex = 0;
   proxyOp.sliceSteps = status.sliceSteps;
   proxyOp.chunkSteps = status.chunkSteps;
   proxyOp.chunkSize = status.chunkSize;
@@ -151,8 +151,8 @@ static ncclResult_t hostToDevRedOp(
     int64_t i64;
     uint64_t u64;
     half f16;
-    #if defined(RCCL_BFLOAT16)
-      rccl_bfloat16 bf16;
+    #if defined(NCCL_BFLOAT16)
+      __nv_bfloat16 bf16;
     #endif
     float f32;
     double f64;
@@ -176,10 +176,10 @@ static ncclResult_t hostToDevRedOp(
       opFull->op = ncclDevPreMulSum;
       f16 = __float2half(float(1.0/comm->nRanks)); // __double2half not supported pre CUDA 11.x
       break;
-    #if defined(RCCL_BFLOAT16)
+    #if defined(NCCL_BFLOAT16)
     case ncclBfloat16:
       opFull->op = ncclDevPreMulSum;
-      bf16 = (rccl_bfloat16)(float(1.0/comm->nRanks));
+      bf16 = (__nv_bfloat16)(float(1.0/comm->nRanks));
       break;
     #endif
     case ncclFloat32:
@@ -228,7 +228,7 @@ static ncclResult_t hostToDevRedOp(
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, half), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, float), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, double), \
-  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, rccl_bfloat16)
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, __nv_bfloat16)
 
 #define MSCCL_KERNEL_ENTRY_DEVREDOP_NOFLOAT(devredop) \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int8_t), \
@@ -256,11 +256,12 @@ void* mscclKernelEntries[ncclNumDevRedOps * ncclNumTypes * NCCL_NUM_PROTOCOLS] =
 
 ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count,
     ncclDataType_t dataType, ncclRedOp_t op, struct mscclAlgo* hostAlgo, struct mscclAlgo* devAlgo,
-    ncclComm_t comm, hipStream_t stream) {
+    ncclComm_t comm, cudaStream_t stream) {
   mscclStatus& status = mscclGetStatus();
   
   if (status.lastStream != stream && status.lastStream != nullptr) {
-    CUDACHECK(hipStreamWaitEvent(stream, comm->doneEvent, 0));
+    // TODO: Wait for last stream to finish, will refactor this later
+    // CUDACHECK(cudaStreamWaitEvent(stream, comm->doneEvent, 0));
   }
 
   dim3 grid = {(uint32_t)hostAlgo->nBlocks, 1, 1};
@@ -283,7 +284,7 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
 
   void *args[3] = {&comm->devComm, &devAlgo, &work};
   void *func = mscclKernelEntries[(opFull.op * ncclNumTypes + dataType) * NCCL_NUM_PROTOCOLS + hostAlgo->protocol];
-  CUDACHECK(hipExtLaunchKernel(func, grid, block, args, 0, stream, NULL, comm->doneEvent, 0));
+  CUDACHECK(cudaLaunchKernel(func, grid, block, args, 0, stream));
   status.workIndex++;
   status.lastStream = stream;
   return ncclSuccess;
