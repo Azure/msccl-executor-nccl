@@ -10,6 +10,8 @@
 #include "xml.h"
 #include <math.h>
 
+#include "msccl/msccl_lifecycle.h"
+
 // Initialize system->maxBw. This is the per-channel (i.e. per-SM)
 // max bw.
 static float getMaxBw(struct ncclTopoSystem* system, struct ncclTopoNode* gpu, int type) {
@@ -902,6 +904,10 @@ done:
     graph->bwInter /= DIVUP(dupChannels, graph->nChannels);
     graph->nChannels = dupChannels;
   }
+
+  if (mscclEnabled()) {
+    system->mscclEnabled = true;
+  } 
   return ncclSuccess;
 }
 

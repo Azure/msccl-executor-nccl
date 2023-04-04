@@ -224,6 +224,7 @@ static ncclResult_t mscclInternalSchedulerSelectAlgo(struct mscclSchedulerParam*
       }
       param->handle = status.rankToAlgoHandles[i][param->rank];
       param->scheduled = true;
+      INFO(NCCL_INIT,"MSCCL: SchedulerSelectAlgo: Algo %s is selected", m.filePath.c_str());
       return ncclSuccess;
     }
   }

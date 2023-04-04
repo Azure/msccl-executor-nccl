@@ -284,6 +284,7 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
 
   void *args[3] = {&comm->devComm, &devAlgo, &work};
   void *func = mscclKernelEntries[(opFull.op * ncclNumTypes + dataType) * NCCL_NUM_PROTOCOLS + hostAlgo->protocol];
+  INFO(NCCL_INIT, "MSCCL: Setup Kernel finished");
   CUDACHECK(cudaLaunchKernel(func, grid, block, args, 0, stream));
   status.workIndex++;
   status.lastStream = stream;
