@@ -151,7 +151,7 @@ static ncclResult_t hostToDevRedOp(
     int64_t i64;
     uint64_t u64;
     half f16;
-    #if defined(NCCL_BFLOAT16)
+    #if defined(__CUDA_BF16_TYPES_EXIST__)
       __nv_bfloat16 bf16;
     #endif
     float f32;
@@ -176,7 +176,7 @@ static ncclResult_t hostToDevRedOp(
       opFull->op = ncclDevPreMulSum;
       f16 = __float2half(float(1.0/comm->nRanks)); // __double2half not supported pre CUDA 11.x
       break;
-    #if defined(NCCL_BFLOAT16)
+    #if defined(__CUDA_BF16_TYPES_EXIST__)
     case ncclBfloat16:
       opFull->op = ncclDevPreMulSum;
       bf16 = (__nv_bfloat16)(float(1.0/comm->nRanks));
@@ -229,6 +229,7 @@ static ncclResult_t hostToDevRedOp(
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, float), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, double), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, __nv_bfloat16)
+  
 
 #define MSCCL_KERNEL_ENTRY_DEVREDOP_NOFLOAT(devredop) \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int8_t), \
@@ -260,6 +261,7 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   mscclStatus& status = mscclGetStatus();
   
   if (status.lastStream != stream && status.lastStream != nullptr) {
+    INFO(NCCL_INIT|NCCL_NET, "mscclSetupKernel - Waiting for last stream to finish");
     // TODO: Wait for last stream to finish, will refactor this later
     // CUDACHECK(cudaStreamWaitEvent(stream, comm->doneEvent, 0));
   }

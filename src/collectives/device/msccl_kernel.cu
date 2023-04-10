@@ -78,6 +78,7 @@ inline __device__ static void copyToShmem8(int tid, void* dst, void const* src, 
 
 __device__ __forceinline__ static void threadBlockCopy(
   uint64_t *dst, uint64_t const *src, uint64_t size, int tid, int nthreads) {
+  printf("Entered threadBlockCopy tid: %d, nthreads: %d, size: %lu, sizeof(struct mscclThreadBlock):%lu, sizeof(struct mscclTransmission):%lu, MSCCL_MAX_NUM_STEPS:%d, sizeof(uint64_t):%lu\n", tid, nthreads, size, sizeof(struct mscclThreadBlock), sizeof(struct mscclTransmission), MSCCL_MAX_NUM_STEPS, sizeof(uint64_t));
   for (int i = tid; i < size; i += nthreads) {
     dst[i] = src[i];
   }
@@ -104,10 +105,13 @@ __device__ __forceinline__ void mscclRunInterpreter(
   const int nthreads = NCCL_MAX_NTHREADS;
 
   // initialize mscclShmem.mscclTB
+  printf("Entered mscclRunInterpreter tid: %d, bid: %d, nthreads: %d\n", tid, bid, nthreads); 
   threadBlockCopy(
     (uint64_t *)&mscclShmem.mscclTB, (uint64_t *)(algo->mscclTBs + bid),
     sizeof(struct mscclThreadBlock), tid, nthreads);
+  printf("Finished threadBlockCopy tid: %d, bid: %d, nthreads: %d\n", tid, bid, nthreads);   
   __syncthreads(); // publish mscclShmem.mscclTB.channelId
+  printf("syncthreads complete, Finished threadBlockCopy tid: %d, bid: %d, nthreads: %d\n", tid, bid, nthreads);   
 
   // initialize ncclShmem and mscclShmem.work
   int channelId = mscclShmem.mscclTB.channelId;
@@ -247,10 +251,9 @@ __device__ __forceinline__ void mscclRunInterpreter(
               T o = load(dstIndex);
               ssize_t srcBaseOffset = gridOffset + (ssize_t)c * sizePerMscclChunk + tid;
               for (int r = 0; r < numReductions; r++){
-                ssize_t srcOffset = srcBaseOffset + (ssize_t) (t->srcOffset+r) * sizePerMscclChunk;
-                T* srcIndex = srcPointer + srcOffset;
-                reduceInput = load(srcIndex);
-                o = applyReduce(redFn, reduceInput, o);
+                  srcOffset = srcBaseOffset + (ssize_t)mscclShmem.mscclTB.reductionSrcOffsets[t->reductionPointer+r] * sizePerMscclChunk;
+                  reduceInput = load(srcPointer + srcOffset);
+                  o = applyReduce(redFn, reduceInput, o);
               }
               store(dstIndex, o);
             }
@@ -261,9 +264,8 @@ __device__ __forceinline__ void mscclRunInterpreter(
             T* dst = dstPointer + dstOffset;
             ssize_t srcBaseOffset = gridOffset + (ssize_t)c * sizePerMscclChunk;
             for (int r = 0; r < numReductions; r++){
-              ssize_t srcOffset = srcBaseOffset + (ssize_t) (t->srcOffset+r) * sizePerMscclChunk;
-              T* src = srcPointer + srcOffset;
-              srcs[r] = src;
+                srcOffset = srcBaseOffset + (ssize_t)mscclShmem.mscclTB.reductionSrcOffsets[t->reductionPointer+r] * sizePerMscclChunk;
+                srcs[r] = srcPointer + srcOffset;
             }
             prims.reduce(srcs, numReductions, &dst, 1, thisNelem);
           }
