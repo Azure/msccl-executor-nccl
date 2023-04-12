@@ -36,7 +36,7 @@
 #define MSCCL_LOCAL_COPY 6
 #define MSCCL_REDUCE 7
 
-struct mscclTransmission {
+struct alignas(16) mscclTransmission {
   int16_t dependencePointer; // index to the first dependence
   int16_t numDependencies; // dependencePointer+numDependencies indicate the last dependence
   int16_t reductionPointer; // where the reduction starts
@@ -52,9 +52,9 @@ struct mscclTransmission {
 
 static_assert((1ULL << (8*sizeof(mscclTransmission::count))) - 1 > MSCCL_MAX_COUNT, "MSCCL_MAX_COUNT must representable by datatype of count");
 
-struct mscclThreadBlock {
+struct alignas(16) mscclThreadBlock {
   // step is used to index into these arrays
-  struct mscclTransmission transmissions[MSCCL_MAX_NUM_STEPS]; // 4KB
+  alignas(16) struct mscclTransmission transmissions[MSCCL_MAX_NUM_STEPS]; // 4KB
   int8_t dependentBid[MSCCL_MAX_NUM_STEPS]; // -1 if not dependent on any thread block, 256 bytes
   int16_t dependentStep[MSCCL_MAX_NUM_STEPS]; // 512 bytes
   int16_t reductionSrcOffsets[MSCCL_MAX_NUM_STEPS]; // 512 bytes
@@ -128,7 +128,7 @@ struct mscclAlgo {
   // number of steps per slice for this algorithm
   int sliceSteps;
   // bid is used as an index into this array
-  struct mscclThreadBlock mscclTBs[MSCCL_MAX_NUM_THREAD_BLOCKS];
+  alignas(16) struct mscclThreadBlock mscclTBs[MSCCL_MAX_NUM_THREAD_BLOCKS];
   // used to calculate proxy info
   struct mscclChannelInfo mscclChannels[MAXCHANNELS];
   // Whether the algorithm requires reduce operation
@@ -207,7 +207,7 @@ struct alignas(16) mscclWork {
 };
 
 struct mscclShmemData {
-  struct mscclThreadBlock mscclTB;
+  alignas(16) struct mscclThreadBlock mscclTB;
   alignas(16) struct mscclWork work;
 };
 static_assert(offsetof(struct mscclShmemData, work) % 16 == 0, "mscclShmemData.work needs to be 16B aligned");

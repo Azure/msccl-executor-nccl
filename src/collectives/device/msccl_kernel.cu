@@ -78,7 +78,6 @@ inline __device__ static void copyToShmem8(int tid, void* dst, void const* src, 
 
 __device__ __forceinline__ static void threadBlockCopy(
   uint64_t *dst, uint64_t const *src, uint64_t size, int tid, int nthreads) {
-  printf("Entered threadBlockCopy tid: %d, nthreads: %d, size: %lu, sizeof(struct mscclThreadBlock):%lu, sizeof(struct mscclTransmission):%lu, MSCCL_MAX_NUM_STEPS:%d, sizeof(uint64_t):%lu\n", tid, nthreads, size, sizeof(struct mscclThreadBlock), sizeof(struct mscclTransmission), MSCCL_MAX_NUM_STEPS, sizeof(uint64_t));
   for (int i = tid; i < size; i += nthreads) {
     dst[i] = src[i];
   }
@@ -105,13 +104,10 @@ __device__ __forceinline__ void mscclRunInterpreter(
   const int nthreads = NCCL_MAX_NTHREADS;
 
   // initialize mscclShmem.mscclTB
-  printf("Entered mscclRunInterpreter tid: %d, bid: %d, nthreads: %d\n", tid, bid, nthreads); 
   threadBlockCopy(
     (uint64_t *)&mscclShmem.mscclTB, (uint64_t *)(algo->mscclTBs + bid),
-    sizeof(struct mscclThreadBlock), tid, nthreads);
-  printf("Finished threadBlockCopy tid: %d, bid: %d, nthreads: %d\n", tid, bid, nthreads);   
+    sizeof(struct mscclThreadBlock)/8, tid, nthreads);
   __syncthreads(); // publish mscclShmem.mscclTB.channelId
-  printf("syncthreads complete, Finished threadBlockCopy tid: %d, bid: %d, nthreads: %d\n", tid, bid, nthreads);   
 
   // initialize ncclShmem and mscclShmem.work
   int channelId = mscclShmem.mscclTB.channelId;
