@@ -12,6 +12,7 @@
 #include <cuda_fp16.h>
 #if CUDART_VERSION >= 11000
 #include <cuda_bf16.h>
+#include <cuda_fp8.h>
 #endif
 
 #define NCCL_MAJOR ${nccl:Major}
@@ -186,7 +187,9 @@ typedef enum { ncclInt8       = 0, ncclChar       = 0,
                ncclFloat64    = 8, ncclDouble     = 8,
 #if defined(__CUDA_BF16_TYPES_EXIST__)
                ncclBfloat16   = 9,
-               ncclNumTypes   = 10
+               ncclFp8E4M3    = 10,
+               ncclFp8E5M2    = 11,
+               ncclNumTypes   = 12
 #else
                ncclNumTypes   = 9
 #endif

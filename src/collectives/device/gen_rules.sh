@@ -10,7 +10,7 @@ dir=$1
 datatypes="i8 u8 i32 u32 i64 u64 f16 f32 f64"
 if [ "$CUDA_MAJOR" -ge 11 ]
 then
-    datatypes+=" bf16"
+    datatypes+=" bf16 fp8_e4m3 fp8_e5m2"
 fi
 
 targets="GENOBJS := \\\\\n"

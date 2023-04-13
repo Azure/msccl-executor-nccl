@@ -34,6 +34,10 @@ static __inline__ int ncclTypeSize(ncclDataType_t type) {
   switch (type) {
     case ncclInt8:
     case ncclUint8:
+#if defined(__CUDA_BF16_TYPES_EXIST__)
+    case ncclFp8E4M3:
+    case ncclFp8E5M2:
+#endif
       return 1;
     case ncclFloat16:
 #if defined(__CUDA_BF16_TYPES_EXIST__)

@@ -55,6 +55,14 @@ struct ncclKernelMatch {
   MACRO_IF(HAVE_BFLOAT16, \
     SINGLE_ARG(, NCCL_FUNC4(func, devredop, MACRO_IF(reduction, __nv_bfloat16, int8_t), specialized)), \
     /*nothing*/ \
+  ) \
+  MACRO_IF(HAVE_BFLOAT16, \
+    SINGLE_ARG(, NCCL_FUNC4(func, devredop, MACRO_IF(reduction, __nv_fp8_e4m3, int8_t), specialized)), \
+    /*nothing*/ \
+  ) \
+  MACRO_IF(HAVE_BFLOAT16, \
+    SINGLE_ARG(, NCCL_FUNC4(func, devredop, MACRO_IF(reduction, __nv_fp8_e5m2, int8_t), specialized)), \
+    /*nothing*/ \
   )
 
 // Must be consistent with ncclDevRedOp_t -- but we only generate kernel for sums.
@@ -81,6 +89,8 @@ static const ncclKernelMatch ncclKerns[1+ncclNumTypes+NCCL_NUM_FUNCTIONS*ncclNum
   {/*double*/(void*)NCCL_KERN_NAME(SendRecv, RING, SIMPLE, Sum, int8_t), false},
   #if HAVE_BFLOAT16
     {/*bfloat16*/(void*)NCCL_KERN_NAME(SendRecv, RING, SIMPLE, Sum, int8_t), false},
+    {/*fp8_e4m3*/(void*)NCCL_KERN_NAME(SendRecv, RING, SIMPLE, Sum, int8_t), false},
+    {/*fp8_e5m2*/(void*)NCCL_KERN_NAME(SendRecv, RING, SIMPLE, Sum, int8_t), false},
   #endif
   NCCL_FUNCS2(Broadcast, /*reduction=*/0),
   NCCL_FUNCS2(Reduce, /*reduction=*/1),
@@ -1390,6 +1400,8 @@ static ncclResult_t hostToDevRedOp(
     half f16;
     #if defined(__CUDA_BF16_TYPES_EXIST__)
       __nv_bfloat16 bf16;
+      __nv_fp8_e4m3 fp8_e4m3;
+      __nv_fp8_e5m2 fp8_e5m2;
     #endif
     float f32;
     double f64;
@@ -1417,6 +1429,14 @@ static ncclResult_t hostToDevRedOp(
     case ncclBfloat16:
       opFull->op = ncclDevPreMulSum;
       bf16 = __float2bfloat16(float(1.0/comm->nRanks));
+      break;
+    case ncclFp8E4M3:
+      opFull->op = ncclDevPreMulSum;
+      fp8_e4m3 = static_cast<__nv_fp8_e4m3>(float(1.0/comm->nRanks));
+      break;
+    case ncclFp8E5M2:
+      opFull->op = ncclDevPreMulSum;
+      fp8_e5m2 = static_cast<__nv_fp8_e5m2>(float(1.0/comm->nRanks));
       break;
     #endif
     case ncclFloat32:
@@ -1563,9 +1583,6 @@ ncclResult_t ncclEnqueueCheck(struct ncclInfo* info) {
   }
   NCCLCHECKGOTO(ArgsCheck(info), ret, fail);
 
-  INFO(NCCL_COLL,"%s: opCount %lx sendbuff %p recvbuff %p count %zi datatype %d op %d root %d comm %p [nranks=%d] stream %p",
-        info->opName, info->comm->opCount, info->sendbuff, info->recvbuff, info->count,
-        info->datatype, info->op, info->root, info->comm, info->comm->nRanks, info->stream);
   TRACE_CALL("nccl%s(%" PRIx64 ",%" PRIx64 ",%zi,%d,%d,%d,%p,%p)", info->opName, reinterpret_cast<int64_t>(info->sendbuff), reinterpret_cast<int64_t>(info->recvbuff), info->count, info->datatype, info->op, info->root, info->comm, info->stream);
 
   NCCLCHECKGOTO(taskAppend(info->comm, info), ret, fail);
