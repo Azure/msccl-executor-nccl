@@ -15,7 +15,7 @@ LIBSRCFILES := init.cc init_nvtx.cc channel.cc bootstrap.cc transport.cc enqueue
 		misc/utils.cc misc/argcheck.cc misc/socket.cc misc/shmutils.cc misc/profiler.cc misc/param.cc misc/strongstream.cc \
 		misc/ipcsocket.cc \
 		transport/p2p.cc transport/shm.cc transport/net.cc transport/net_socket.cc transport/net_ib.cc transport/coll_net.cc transport/nvls.cc \
-                collectives/sendrecv.cc collectives/all_reduce.cc collectives/all_gather.cc collectives/broadcast.cc collectives/reduce.cc collectives/reduce_scatter.cc collectives/msccl.cc \
+                collectives/sendrecv.cc collectives/all_reduce.cc collectives/all_gather.cc collectives/broadcast.cc collectives/reduce.cc collectives/reduce_scatter.cc collectives/all_to_all.cc collectives/msccl.cc \
                 graph/topo.cc graph/paths.cc graph/search.cc graph/connect.cc graph/rings.cc graph/trees.cc graph/tuning.cc graph/xml.cc
 
 ##### lib files
@@ -77,7 +77,7 @@ $(INCDIR)/nccl.h : nccl.h.in ../makefiles/version.mk
 	    $< > $@
 
 $(LIBDIR)/$(LIBTARGET): $(LIBOBJ) $(DEVICELIB)
-	@printf "Linking    %-35s > %s\n" $(LIBTARGET) $@
+	@printf "Linking    %-35s > %s\n" $(LIBTARGET) $@ $^
 	mkdir -p $(LIBDIR)
 	$(CXX) $(CXXFLAGS) -shared -Wl,--no-as-needed -Wl,-soname,$(LIBSONAME) -o $@ $(LIBOBJ) $(DEVICELIB) $(LDFLAGS)
 	ln -sf $(LIBSONAME) $(LIBDIR)/$(LIBNAME)

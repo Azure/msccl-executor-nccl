@@ -330,6 +330,10 @@ static ncclResult_t mscclFallBackSavedParams() {
         NCCLCHECK(ncclRecv(param.p.recvBuff, param.p.count, param.p.dataType,
           param.p.peer, param.comm, param.stream));
         break;
+      case mscclFuncAllToAll:
+        NCCLCHECK(ncclAllToAll(param.p.sendBuff, param.p.recvBuff, param.p.count, param.p.dataType,
+          param.comm, param.stream));
+        break;
       default:
         WARN("Invalid MSCCL function type in saved parameter");
         return ncclInvalidUsage;
