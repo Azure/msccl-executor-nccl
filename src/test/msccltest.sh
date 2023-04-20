@@ -7,7 +7,8 @@ echo "with both nvlink and ib (NCCL_P2P_DISABLE=1, NCCL_SHM_DISABLE=1) and run b
 echo ""
 
 MSCCL_PATH=$HOME/nccl/build/lib
-MSCCL_ALGOS=(allreduce_a100_allpairs allreduce_a100_ring alltoall_allpairs)
+# MSCCL_ALGOS=(allreduce_a100_allpairs allreduce_a100_ring alltoall_allpairs)
+MSCCL_ALGOS=(allreduce_a100_allpairs)
 MSCCL_PROTO=(LL LL128 Simple) 
 MSCCL_TOOL=$HOME/msccl-tools/examples/mscclang
 MSCCL_ALGO_PATH=$HOME/msccl-algo
@@ -25,9 +26,12 @@ fi
 for algo in ${MSCCL_ALGOS[@]}; do
     for proto in ${MSCCL_PROTO[@]}; do
         algo_file=${algo}_8n_$proto.xml
-        if [ ! -e $MSCCL_ALGO_PATH/$algo_file]; then
+        if [ ! -e $MSCCL_ALGO_PATH/$algo_file ]; then
             echo "The algo file: $algo_file does not exist, generating..."
             msccl_algo_gen="python $MSCCL_TOOL/$algo.py --protocol=$proto 8 2 > $MSCCL_ALGO_PATH/$algo_file"
+            if [ $algo = "allreduce_a100_ring" ]; then
+                msccl_algo_gen="python $MSCCL_TOOL/$algo.py --protocol=$proto 8 1 2 > $MSCCL_ALGO_PATH/$algo_file"
+            fi
             echo $msccl_algo_gen
             eval $msccl_algo_gen
         fi
@@ -42,11 +46,13 @@ for algo in ${MSCCL_ALGOS[@]}; do
         
         for NCCL_P2P_DISABLE in 0 1; do
             for NCCL_SHM_DISABLE in 0 1; do
-                testresult=$TESTRESULT_HOME/${algo}_${proto}_${NCCL_P2P_DISABLE}_${NCCL_SHM_DISABLE}.txt
-                echo "Running the $algo with $proto and NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE and NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE"
-                msccl_test="mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$MSCCL_PATH/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=MSCCL,RING,TREE  -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $NCCL_TESTS_PATH/$NCCL_TEST_TYPE -b 128 -e 32MB -f 2 -g 1 -c 1 -n 100 -w 100 -G 1 -z 0 > $testresult"
-                echo $msccl_test
-                eval $msccl_test
+                for DATA_TYPE in float bfloat16 fp8_e4m3 fp8_e5m2; do
+                    testresult=$TESTRESULT_HOME/${algo}_${proto}_${NCCL_P2P_DISABLE}_${NCCL_SHM_DISABLE}_${DATA_TYPE}.txt
+                    echo "Running the $algo with $proto and NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE and NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE"
+                    msccl_test="mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$MSCCL_PATH/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=MSCCL,RING,TREE  -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $NCCL_TESTS_PATH/$NCCL_TEST_TYPE -b 128 -e 32MB -d $DATA_TYPE -f 2 -g 1 -c 1 -n 100 -w 100 -G 1 -z 0 > $testresult"
+                    echo $msccl_test
+                    eval $msccl_test
+                done
             done
         done
     done
