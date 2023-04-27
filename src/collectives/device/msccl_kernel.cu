@@ -14,6 +14,7 @@
 __shared__ struct mscclShmemData mscclShmem;
 
 #define MSCCL_MAX_ITER 65536
+#define DEBUG_PRINT 0
 
 // flags are a 3-tuple of (workindex, gridoffset_iter, step) and it follows a lexicographical order. a threadblock is ahead of another iff its flag is ahead
 #define COMPUTE_FLAG(__WORKINDEX__,__GRIDOFFSET_ITER__,__STEP__) \
@@ -66,16 +67,6 @@ inline __device__ static void barrier(int nthreads) {
     asm volatile ("bar.sync %1, %0;" :: "r"(nthreads), "r"(15));
 }
 
-// Copy 8-byte aligned data. You must call with at least `(bytes+7)/8` threads.
-inline __device__ static void copyToShmem8(int tid, void* dst, void const* src, int bytes) {
-  int offset = 8 * tid;
-  if (offset < bytes) {
-    uint64_t *src2 = (uint64_t*)((char const*)src + offset);
-    uint64_t *dst2 = (uint64_t*)((char*)dst + offset);
-    *dst2 = *src2;
-  }
-}
-
 __device__ __forceinline__ static void threadBlockCopy(
   uint64_t *dst, uint64_t const *src, uint64_t size, int tid, int nthreads) {
   for (int i = tid; i < size; i += nthreads) {
@@ -101,14 +92,21 @@ __device__ __forceinline__ void mscclRunInterpreter(
   struct ncclDevComm* comm, struct mscclAlgo* algo, struct mscclWork work) {
   const int tid = threadIdx.x;
   const int bid = blockIdx.x;
-  const int nthreads = NCCL_MAX_NTHREADS;
+  const int nthreads = blockDim.x;
+
+  #if 0
+    printf("Entered into mscclRunInterpreter tid %d bid %d \n", tid, bid);
+  #endif
 
   // initialize mscclShmem.mscclTB
   threadBlockCopy(
     (uint64_t *)&mscclShmem.mscclTB, (uint64_t *)(algo->mscclTBs + bid),
-    sizeof(struct mscclThreadBlock)/8, tid, nthreads);
+    sizeof(struct mscclThreadBlock)/sizeof(uint64_t), tid, nthreads);
   __syncthreads(); // publish mscclShmem.mscclTB.channelId
 
+  #if 0
+    printf("Finished threadBlockCopy tid %d bid %d recvPeer %d sendPeer %d ncclShmem.comm.buffSizes[NCCL_PROTO_SIMPLE] %d\n", tid, bid, mscclShmem.mscclTB.recvPeer, mscclShmem.mscclTB.sendPeer, ncclShmem.comm.buffSizes[NCCL_PROTO_SIMPLE]);
+  #endif
   // initialize ncclShmem and mscclShmem.work
   int channelId = mscclShmem.mscclTB.channelId;
   {
@@ -120,20 +118,20 @@ __device__ __forceinline__ void mscclRunInterpreter(
       dst = &ncclShmem.comm;
       src = comm;
       bytes = sizeof(ncclDevComm);
-      static_assert(sizeof(ncclDevComm) <= sizeof(uint64_t) * WARP_SIZE, "ncclDevComm cannot be loaded by a single warp in one insn.");
+      static_assert(sizeof(ncclDevComm) <= 16 * WARP_SIZE, "ncclDevComm cannot be loaded by a single warp in one insn.");
       break;
     case 1:
       // Get address of channel without incurring indirect load from ncclDevComm::channels
       dst = &ncclShmem.channel;
       src = &((ncclDevCommAndChannels*)comm)->channels[channelId];
       bytes = sizeof(ncclDevChannel);
-      static_assert(sizeof(ncclDevChannel) <= sizeof(uint64_t) * WARP_SIZE, "ncclDevChannel cannot be loaded by a single warp in one insn.");
+      static_assert(sizeof(ncclDevChannel) <= 16 * WARP_SIZE, "ncclDevChannel cannot be loaded by a single warp in one insn.");
       break;
     case 2:
       dst = &mscclShmem.work;
       src = &work;
       bytes = sizeof(mscclWork);
-      static_assert(sizeof(mscclWork) <= sizeof(uint64_t) * WARP_SIZE, "mscclWork cannot be loaded by a single warp in one insn.");
+      static_assert(sizeof(mscclWork) <= 16 * WARP_SIZE, "mscclWork cannot be loaded by a single warp in one insn.");
       break;
     case 3:
       /* set abort flag to 0 */
@@ -142,10 +140,14 @@ __device__ __forceinline__ void mscclRunInterpreter(
     default:
       break;
     }
-    copyToShmem8(tid%WARP_SIZE, dst, src, bytes);
+    copyToShmem16(tid%WARP_SIZE, dst, src, bytes);
   }
   __syncthreads(); // publish shmem
 
+  #if 0
+    printf("Finished copyToShmem16 tid %d bid %d recvPeer %d sendPeer %d \n", tid, bid, mscclShmem.mscclTB.recvPeer, mscclShmem.mscclTB.sendPeer);
+  #endif
+  
   // Deference reduce args if required
   if (tid == 0 && mscclShmem.work.hasReduce && mscclShmem.work.redOpArgIsPtr) {
     switch (sizeof(T)) {
@@ -175,6 +177,10 @@ __device__ __forceinline__ void mscclRunInterpreter(
   int sendPeer = mscclShmem.mscclTB.sendPeer;
 
   const ssize_t chunkSize = int(Proto::calcBytePerStep()/sizeof(T) * (Proto::Id == NCCL_PROTO_SIMPLE ? MSCCL_CHUNKSTEPS : 1));
+  #if DEBUG_PRINT
+    __syncthreads();
+    printf("Finished Deference reduce args complete tid %d bid %d, recvPeer %d sendPeer %d chunkSize:%ld \n", tid, bid, recvPeer, sendPeer, chunkSize);
+  #endif
   int minChunkSize;
   if (Proto::Id == NCCL_PROTO_LL)
     minChunkSize = nthreads*(Proto::calcBytePerGrain()/sizeof(T));
@@ -194,20 +200,32 @@ __device__ __forceinline__ void mscclRunInterpreter(
   // this still needs more work. when we make a way around the queue, the flag might have been set to undesired values. will be fixed in subsequent versions.
   const int64_t workIndex = mscclShmem.work.workIndex;
   volatile struct mscclFlag* mscclFlags = mscclShmem.work.syncFlags;
+  #if DEBUG_PRINT
+    __syncthreads();
+    printf("Prepare send data tid %d bid %d sizePerMscclChunk %ld chunkSize %ld recvPeer %d sendPeer %d \n", tid, bid, sizePerMscclChunk, chunkSize, recvPeer, sendPeer);
+  #endif
   for (ssize_t gridOffset = 0, iter = 0; gridOffset < sizePerMscclChunk; gridOffset += chunkSize, iter++) {
+    #if DEBUG_PRINT
+      printf("mscclRunInterpreter(outter loop), bid:%d, tid:%d\n", bid, tid);
+    #endif
+
     ssize_t realChunkSize;
     if (Proto::Id == NCCL_PROTO_SIMPLE) {
       realChunkSize = min(chunkSize, sizePerMscclChunk-gridOffset);
-      realChunkSize = roundUp(realChunkSize, nthreads*sizeof(uint64_t)/sizeof(T));
+      realChunkSize = roundUp(realChunkSize, (nthreads-WARP_SIZE)*sizeof(uint64_t)/sizeof(T));
     }
     else
       realChunkSize = min(chunkSize, divUp(sizePerMscclChunk-gridOffset, minChunkSize)*minChunkSize);
+    
     realChunkSize = int(realChunkSize);
     int nelem = min(realChunkSize, sizePerMscclChunk-gridOffset);
 
     ssize_t srcOffset, dstOffset;
     T *srcPointer, *dstPointer;
     int step = 0;
+    #if DEBUG_PRINT
+      printf("mscclRunInterpreter(inter loop), bid:%d, tid:%d, mscclShmem.mscclTB.nSteps: %d\n", bid, tid, mscclShmem.mscclTB.nSteps);
+    #endif
     for (int i = 0; i < mscclShmem.mscclTB.nSteps; i++){
       struct mscclTransmission* t = &mscclShmem.mscclTB.transmissions[i];
       // first wait if there is a dependence
@@ -228,6 +246,9 @@ __device__ __forceinline__ void mscclRunInterpreter(
       dstPointer = (t->dstBuffer == MSCCL_INPUT_BUFFER) ? thisInput : ((t->dstBuffer == MSCCL_OUTPUT_BUFFER) ? thisOutput : thisScratch);
       prims.setDataPtrs(srcPointer, dstPointer);
       int count = t->count;
+      #if DEBUG_PRINT
+         printf("mscclRunInterpreter(inner loop), bid:%d, tid:%d, count: %d, maxAllowedCount: %d\n", bid, tid, count, maxAllowedCount);
+      #endif
       for (int c = 0; c < count; c += maxAllowedCount) {
         srcOffset = gridOffset + (ssize_t) (t->srcOffset+c) * sizePerMscclChunk;
         dstOffset = gridOffset + (ssize_t) (t->dstOffset+c) * sizePerMscclChunk;
@@ -235,10 +256,20 @@ __device__ __forceinline__ void mscclRunInterpreter(
         int thisNelem = nelem * thisCount;
         if (t->type == MSCCL_SEND)
           prims.sendWithBarrier(srcOffset, thisNelem); // LL.send is the only situation where there is no barrier at the end.
-        else if (t->type == MSCCL_RECV)
+        else if (t->type == MSCCL_RECV){
+          #if DEBUG_PRINT
+            printf("Prepared entry into prims.recv tid %d bid %d \n", tid, bid);
+          #endif
           prims.recv(dstOffset, thisNelem);
+          #if DEBUG_PRINT
+            printf("Exited from prims.recv tid %d bid %d \n", tid, bid);
+          #endif
+        }
         else if (t->type == MSCCL_REDUCE) {
           int numReductions = t->numReductions;
+          #if DEBUG_PRINT
+            printf("Entered into MSCCL_REDUCE tid %d bid %d \n", tid, bid);
+          #endif
           if (thisNelem < nthreads){
             if (tid < thisNelem){
               dstOffset = gridOffset + (ssize_t) (t->dstOffset+c) * sizePerMscclChunk;
@@ -266,6 +297,9 @@ __device__ __forceinline__ void mscclRunInterpreter(
             prims.reduce(srcs, numReductions, &dst, 1, thisNelem);
           }
           if (c == 0) step += (numReductions-1); // only advance step once!
+          #if DEBUG_PRINT
+            printf("Exit MSCCL_REDUCE tid %d bid %d \n", tid, bid);
+          #endif
         } else if (t->type == MSCCL_RECV_COPY_SEND)
           prims.recvCopySend(dstOffset, thisNelem);
         else if (t->type == MSCCL_RECV_REDUCE_SEND)
@@ -285,6 +319,9 @@ __device__ __forceinline__ void mscclRunInterpreter(
       step++;
     }
   }
+  #if DEBUG_PRINT
+  printf("quit mscclRunInterpreter, bid:%d, tid:%d \n", bid, tid);
+  #endif
 }
 
 #define MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, type) \

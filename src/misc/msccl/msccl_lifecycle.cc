@@ -194,8 +194,7 @@ static ncclResult_t mscclInternalSchedulerSelectAlgo(struct mscclSchedulerParam*
   if (param->func == mscclFuncReduce ||
       param->func == mscclFuncBroadcast ||
       param->func == mscclFuncAllReduce ||
-      param->func == mscclFuncAllToAll ||
-      param->func == mscclFuncAllToAllv) {
+      param->func == mscclFuncAllToAll) {
     isInPlace = param->sendBuff == param->recvBuff;
   } else if (param->func == mscclFuncAllGather ||
              param->func == mscclFuncGather) {

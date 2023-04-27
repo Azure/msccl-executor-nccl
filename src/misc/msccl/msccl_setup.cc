@@ -267,7 +267,14 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   }
 
   dim3 grid = {(uint32_t)hostAlgo->nBlocks, 1, 1};
-  dim3 block = {NCCL_MAX_NTHREADS, 1, 1};
+  dim3 block;
+  if (hostAlgo->protocol == NCCL_PROTO_SIMPLE) {
+    block = {NCCL_SIMPLE_MAX_NTHREADS + WARP_SIZE, 1, 1};
+  }
+  else
+  {
+    block = {NCCL_MAX_NTHREADS, 1, 1};
+  }
   ncclDevRedOpFull opFull;
   NCCLCHECK(hostToDevRedOp(&opFull, op, dataType, comm));
 
