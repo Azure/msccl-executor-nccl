@@ -5,17 +5,17 @@ echo "Starting the msccl tests, which will including below algo"
 echo "allreduce_a100_allpairs, allreduce_a100_ring, alltoall_allpairs"
 echo "with both nvlink and ib (NCCL_P2P_DISABLE=1, NCCL_SHM_DISABLE=1) and run both graph (-G 1) and non-graph mode in nccl-tests"
 echo ""
-TESTTYPE = $1
+TEST_TYPE=$1
 MSCCL_PATH=$HOME/nccl/build/lib
 MSCCL_ALGOS=(allreduce_a100_allpairs allreduce_a100_ring alltoall_allpairs)
 MSCCL_PROTO=(LL128 Simple LL) 
 declare MSCCL_DATA_TYPE 
 declare MSCCL_OP_TYPE
-if [ $TESTTYPE = "all" ]; then
+if [ $TEST_TYPE -eq "all" ]; then
     MSCCL_DATA_TYPE=(int8 uint8 int32 uint32 int64 uint64 half float double bfloat16 fp8_e4m3 fp8_e5m2)
     MSCCL_OP_TYPE=(sum, prod, max, min, avg, mulsum)
 else
-    MSCCL_DATA_TYPE=(float bfloat16 fp8_e4m3 fp8_e5m2)
+    MSCCL_DATA_TYPE=(float fp8_e4m3 fp8_e5m2)
     MSCCL_OP_TYPE=(sum)
 fi
 MSCCL_TOOL=$HOME/msccl-tools/examples/mscclang
@@ -68,6 +68,7 @@ for algo in ${MSCCL_ALGOS[@]}; do
                                 echo $msccl_test
                                 eval $msccl_test
                                 wait
+                            done
                         done
                     done
                 done
