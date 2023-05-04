@@ -8,7 +8,8 @@ echo ""
 TEST_TYPE=$1
 MSCCL_PATH=$HOME/nccl/build/lib
 MSCCL_ALGOS=(allreduce_a100_allpairs allreduce_a100_ring alltoall_allpairs)
-MSCCL_PROTO=(LL128 Simple LL) 
+# MSCCL_PROTO=(LL128 Simple LL) 
+MSCCL_PROTO=(Simple) 
 declare MSCCL_DATA_TYPE 
 declare MSCCL_OP_TYPE
 if [ $TEST_TYPE -eq "all" ]; then
@@ -20,6 +21,7 @@ else
 fi
 MSCCL_TOOL=$HOME/msccl-tools/examples/mscclang
 MSCCL_ALGO_PATH=$HOME/msccl-algo
+MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/msccl-algorithms
 NCCL_TESTS_PATH=$HOME/nccl-tests/build
 TESTRESULT_HOME=$HOME/msccl-test-results
 
@@ -30,6 +32,11 @@ fi
 if [ ! -d "$TESTRESULT_HOME" ]; then
     mkdir $TESTRESULT_HOME
 fi
+
+if [ ! -d "$MSCCL_ALGO_TEST_PATH" ]; then
+    mkdir $MSCCL_ALGO_TEST_PATH
+fi
+
 
 for algo in ${MSCCL_ALGOS[@]}; do
     for proto in ${MSCCL_PROTO[@]}; do
@@ -43,8 +50,8 @@ for algo in ${MSCCL_ALGOS[@]}; do
             echo $msccl_algo_gen
             eval $msccl_algo_gen
         fi
-        echo "Copying the algo file $MSCCL_ALGO_PATH/$algo_file to $MSCCL_PATH/msccl-algorithms/test.xml"
-        cp $MSCCL_ALGO_PATH/$algo_file $MSCCL_PATH/msccl-algorithms/test.xml
+        echo "Copying the algo file $MSCCL_ALGO_PATH/$algo_file to $MSCCL_ALGO_TEST_PATH/test.xml"
+        cp $MSCCL_ALGO_PATH/$algo_file $MSCCL_ALGO_TEST_PATH/test.xml
         echo "Running the $algo with $proto"
         if [ $algo = "allreduce_a100_allpairs" ] || [ $algo = "allreduce_a100_ring" ]; then
             NCCL_TEST_TYPE=all_reduce_perf
