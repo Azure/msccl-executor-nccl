@@ -82,8 +82,8 @@ static ncclResult_t mscclInternalSchedulerInit() {
     if (!dladdr1((void *)mscclInternalSchedulerInit, &dl_info, (void **)&link_map_ptr, RTLD_DL_LINKMAP)) {
       WARN("MSCCL Internal Scheduler: dladdr1 failed");
       return ncclInvalidUsage;
-  }
-  std::string selfLibPath = link_map_ptr->l_name;
+    }
+    std::string selfLibPath = link_map_ptr->l_name;
     mscclAlgoDirStr = selfLibPath.substr(0, selfLibPath.find_last_of("/\\") + 1);
     mscclAlgoDirStr += (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestAlgoDefaultDir : mscclAlgoDefaultDir;
     mscclAlgoDir = mscclAlgoDirStr.c_str();
@@ -142,6 +142,11 @@ static ncclResult_t mscclSchedulerInit() {
 }
 
 ncclResult_t mscclInit(ncclComm_t comm) {
+  if (comm->intraRanks > 1) {
+    mscclInitialized.store(false, std::memory_order_release);
+    INFO(NCCL_INIT, "MSCCL doesn't support multiple GPUs in one process and is not available");
+    return ncclSuccess;
+  }
   // Always initialize thread local status
   mscclThreadLocalStatus threadLocalStatus = mscclGetThreadLocalStatus();
   threadLocalStatus.groupStatus = mscclNoGroup;
@@ -155,35 +160,35 @@ ncclResult_t mscclInit(ncclComm_t comm) {
       return ncclSuccess;
     }
 
-      mscclStatus& status = mscclGetStatus();
-      status.scratchBuffer = nullptr;
-      status.scratchBufferSize = 0;
-      status.workIndex = 1;
-      status.freeAlgoHandles.resize(MSCCL_MAX_NUM_ALGOS);
-      for (int i = 0; i < MSCCL_MAX_NUM_ALGOS; i++) {
-        status.freeAlgoHandles[i] = MSCCL_MAX_NUM_ALGOS - i - 1;
-      }
-      NCCLCHECK(ncclCudaCalloc(&status.syncFlags, MSCCL_MAX_NUM_THREAD_BLOCKS));
-      status.lastStream = nullptr;
-      mscclSchedulerTriedLoadAlgo = false;
-    
-      NCCLCHECK(mscclSchedulerInit());
+    mscclStatus& status = mscclGetStatus();
+    status.scratchBuffer = nullptr;
+    status.scratchBufferSize = 0;
+    status.workIndex = 1;
+    status.freeAlgoHandles.resize(MSCCL_MAX_NUM_ALGOS);
+    for (int i = 0; i < MSCCL_MAX_NUM_ALGOS; i++) {
+      status.freeAlgoHandles[i] = MSCCL_MAX_NUM_ALGOS - i - 1;
+    }
+    NCCLCHECK(ncclCudaCalloc(&status.syncFlags, MSCCL_MAX_NUM_THREAD_BLOCKS));
+    status.lastStream = nullptr;
+    mscclSchedulerTriedLoadAlgo = false;
 
-      mscclInitialized.store(true, std::memory_order_release);
+    NCCLCHECK(mscclSchedulerInit());
+
+    mscclInitialized.store(true, std::memory_order_release);
   }
 
-    INFO(NCCL_INIT, "MSCCL: Initialization finished");
-    return ncclSuccess;
-  }
+  INFO(NCCL_INIT, "MSCCL: Initialization finished");
+  return ncclSuccess;
+}
 
-  ncclResult_t mscclGroupStart() {
+ncclResult_t mscclGroupStart() {
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   threadLocalStatus.groupDepth++;
   if (threadLocalStatus.groupStatus == mscclNoGroup) {
     threadLocalStatus.groupStatus = mscclGroupSupportedOp;
   }
-    return ncclSuccess;
-  }
+  return ncclSuccess;
+}
 
 static ncclResult_t mscclInternalSchedulerSelectAlgo(struct mscclSchedulerParam* param) {
   mscclStatus& status = mscclGetStatus();
@@ -203,7 +208,7 @@ static ncclResult_t mscclInternalSchedulerSelectAlgo(struct mscclSchedulerParam*
              param->func == mscclFuncScatter) {
     isInPlace = (char*)param->recvBuff == (char*)param->sendBuff + param->rank * param->count * ncclTypeSize(param->dataType);
   }
-  
+
   // Search suitable algorithms
   for (size_t i = 0; i < status.algoMetas.size(); i++) {
     auto &m = status.algoMetas[i];
@@ -302,7 +307,7 @@ static ncclResult_t mscclFallBackSavedParams() {
   for (auto& param : threadLocalStatus.savedSchedulerParams) {
     switch (param.p.func) {
       case mscclFuncReduce:
-         NCCLCHECK(ncclReduce(param.p.sendBuff, param.p.recvBuff, param.p.count, param.p.dataType,
+        NCCLCHECK(ncclReduce(param.p.sendBuff, param.p.recvBuff, param.p.count, param.p.dataType,
           param.p.op, param.p.root, param.comm, param.stream));
         break;
       case mscclFuncBroadcast:
@@ -430,25 +435,25 @@ ncclResult_t mscclTeardown() {
   {
     std::lock_guard<std::mutex> lock(mscclLifecycleMutex);
 
-  if (!mscclInitialized.load(std::memory_order_acquire)) {
-    return ncclSuccess;
-  }
-  mscclStatus& status = mscclGetStatus();
-  for (auto &p : status.hostAlgos) {
-    free(p.second);
-    status.freeAlgoHandles.push_back(p.first);
-  }
-  for (auto &p : status.devAlgos) {
-    CUDACHECK(cudaFree(p.second));
-  }
-  CUDACHECK(cudaFree(status.scratchBuffer));
-  CUDACHECK(cudaFree(status.syncFlags));
-  status.hostAlgos.clear();
-  status.devAlgos.clear();
-  status.freeAlgoHandles.clear();
-  status.scratchBuffer = nullptr;
-  status.scratchBufferSize = 0;
-  status.connectedAlgos.clear();
+    if (!mscclInitialized.load(std::memory_order_acquire)) {
+      return ncclSuccess;
+    }
+    mscclStatus& status = mscclGetStatus();
+    for (auto &p : status.hostAlgos) {
+      free(p.second);
+      status.freeAlgoHandles.push_back(p.first);
+    }
+    for (auto &p : status.devAlgos) {
+      CUDACHECK(cudaFree(p.second));
+    }
+    CUDACHECK(cudaFree(status.scratchBuffer));
+    CUDACHECK(cudaFree(status.syncFlags));
+    status.hostAlgos.clear();
+    status.devAlgos.clear();
+    status.freeAlgoHandles.clear();
+    status.scratchBuffer = nullptr;
+    status.scratchBufferSize = 0;
+    status.connectedAlgos.clear();
     if (status.mscclSchedulerPtr) {
       NCCLCHECK(status.mscclSchedulerPtr->teardown());
       status.mscclSchedulerPtr = nullptr;
@@ -457,7 +462,7 @@ ncclResult_t mscclTeardown() {
     } else {
       NCCLCHECK(mscclInternalSchedulerTeardown());
     }
-  mscclInitialized.store(false, std::memory_order_release);
+    mscclInitialized.store(false, std::memory_order_release);
   }
 
   INFO(NCCL_INIT, "MSCCL: Teardown finished");

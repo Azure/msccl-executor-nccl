@@ -277,7 +277,8 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   }
   ncclDevRedOpFull opFull;
   NCCLCHECK(hostToDevRedOp(&opFull, op, dataType, comm));
-
+  size_t smem = ncclShmemDynamicSize(comm->cudaArch);
+  
   mscclWork work;
   work.syncFlags = status.syncFlags;
   work.scratchBuffer = status.scratchBuffer;
@@ -290,11 +291,10 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   work.maxAllowedCount = status.maxAllowedCount;
   work.hasReduce = hostAlgo->hasReduce;
   work.redOpArgIsPtr = opFull.scalarArgIsPtr;
-
+  TRACE("MSCCL: Setup Kernel finished, smem %ld", smem);
   void *args[3] = {&comm->devComm, &devAlgo, &work};
   void *func = mscclKernelEntries[(opFull.op * ncclNumTypes + dataType) * NCCL_NUM_PROTOCOLS + hostAlgo->protocol];
-  TRACE("MSCCL: Setup Kernel finished");
-  CUDACHECK(cudaLaunchKernel(func, grid, block, args, 0, stream));
+  CUDACHECK(cudaLaunchKernel(func, grid, block, args, smem/hostAlgo->nBlocks, stream));
   status.workIndex++;
   status.lastStream = stream;
   return ncclSuccess;
