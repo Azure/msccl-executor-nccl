@@ -354,8 +354,6 @@ ncclResult_t mscclEnqueueCheck(
     size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
     mscclFunc_t func, ncclComm_t comm, cudaStream_t stream) {
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
-  cudaStreamCaptureStatus captureStatus;
-  unsigned long long pid;
 
   threadLocalStatus.savedSchedulerParams.push_back({});
   NCCLCHECK(mscclSetSavedSchedulerParam(
@@ -366,21 +364,16 @@ ncclResult_t mscclEnqueueCheck(
   switch (threadLocalStatus.groupStatus) {
     case mscclNoGroup:
       if (comm->mscclCompatible) {
-        CUDACHECK(cudaStreamGetCaptureInfo(stream, &captureStatus, &pid));
-        if (captureStatus == cudaStreamCaptureStatusNone) {
             NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
             if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
               NCCLCHECK(mscclRunSavedParams());
               break;
             }
         }
-      }
       NCCLCHECK(mscclFallBackSavedParams());
       break;
     case mscclGroupSupportedOp:
       if (comm->mscclCompatible) {
-        CUDACHECK(cudaStreamGetCaptureInfo(stream, &captureStatus, &pid));
-        if (captureStatus == cudaStreamCaptureStatusNone) {
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
             // Only save counts and displs when there is suitable MSCCL algorithm for this
@@ -388,8 +381,8 @@ ncclResult_t mscclEnqueueCheck(
             break;
           }
         }
-      }
       threadLocalStatus.groupStatus = mscclGroupUnsupportedOp;
+      NCCLCHECK(mscclFallBackSavedParams());
     case mscclGroupUnsupportedOp:
       NCCLCHECK(mscclFallBackSavedParams());
       break;

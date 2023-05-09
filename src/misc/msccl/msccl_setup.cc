@@ -294,6 +294,7 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   TRACE("MSCCL: Setup Kernel finished, smem %ld", smem);
   void *args[3] = {&comm->devComm, &devAlgo, &work};
   void *func = mscclKernelEntries[(opFull.op * ncclNumTypes + dataType) * NCCL_NUM_PROTOCOLS + hostAlgo->protocol];
+  //A100 SUPPORT max shared memory of 163KB.
   CUDACHECK(cudaLaunchKernel(func, grid, block, args, smem/hostAlgo->nBlocks, stream));
   status.workIndex++;
   status.lastStream = stream;
