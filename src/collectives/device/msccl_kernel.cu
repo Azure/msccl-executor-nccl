@@ -95,7 +95,7 @@ __device__ __forceinline__ void mscclRunInterpreter(
   const int nthreads = blockDim.x;
 
   #if 0
-    printf("Entered into mscclRunInterpreter tid %d bid %d \n", tid, bid);
+    printf("Entered into mscclRunInterpreter tid %d bid %d\n", tid, bid);
   #endif
 
   // initialize mscclShmem.mscclTB
@@ -206,7 +206,7 @@ __device__ __forceinline__ void mscclRunInterpreter(
   #endif
   for (ssize_t gridOffset = 0, iter = 0; gridOffset < sizePerMscclChunk; gridOffset += chunkSize, iter++) {
     #if DEBUG_PRINT
-      printf("mscclRunInterpreter(outter loop), bid:%d, tid:%d\n", bid, tid);
+      printf("mscclRunInterpreter(outter loop), bid:%d, tid:%d \n", bid, tid);
     #endif
 
     ssize_t realChunkSize;
@@ -224,7 +224,7 @@ __device__ __forceinline__ void mscclRunInterpreter(
     T *srcPointer, *dstPointer;
     int step = 0;
     #if DEBUG_PRINT
-      printf("mscclRunInterpreter(inter loop), bid:%d, tid:%d, mscclShmem.mscclTB.nSteps: %d\n", bid, tid, mscclShmem.mscclTB.nSteps);
+      printf("mscclRunInterpreter(inter loop), bid:%d, tid:%d, mscclShmem.mscclTB.nSteps: %d \n", bid, tid, mscclShmem.mscclTB.nSteps);
     #endif
     for (int i = 0; i < mscclShmem.mscclTB.nSteps; i++){
       struct mscclTransmission* t = &mscclShmem.mscclTB.transmissions[i];
@@ -345,7 +345,9 @@ __global__ void MSCCL_KERNEL_ENTRY_NAME(devredop, type, Simple)(struct ncclDevCo
   MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, half) \
   MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, float) \
   MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, double) \
-  MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, __nv_bfloat16)
+  MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, __nv_bfloat16) \
+  MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, __nv_fp8_e4m3) \
+  MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, __nv_fp8_e5m2)
 
 #define MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_NOFLOAT(devredop) \
   MSCCL_IMPL_KERNEL_ENTRY_FUNC_DEVREDOP_TYPE(devredop, int8_t) \

@@ -686,12 +686,12 @@ struct Apply_LoadMultimem {
     DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_bfloat16, add, bf16x2, u32)
     DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_bfloat16, min, bf16x2, u32)
     DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_bfloat16, max, bf16x2, u32)
-    DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_fp8_e4m3, add, fp8x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_fp8_e4m3, min, fp8x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_fp8_e4m3, max, fp8x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_fp8_e5m2, add, fp8x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_fp8_e5m2, min, fp8x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_fp8_e5m2, max, fp8x2, u16)
+    DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_fp8_e4m3, add, e4m3x2, u16)
+    DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_fp8_e4m3, min, e4m3x2, u16)
+    DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_fp8_e4m3, max, e4m3x2, u16)
+    DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_fp8_e5m2, add, e5m2x2, u16)
+    DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_fp8_e5m2, min, e5m2x2, u16)
+    DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_fp8_e5m2, max, e5m2x2, u16)
   #endif
 #endif
 
