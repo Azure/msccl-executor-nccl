@@ -215,7 +215,7 @@ static ncclResult_t mscclInternalSchedulerSelectAlgo(struct mscclSchedulerParam*
   param->scheduled = false;
 
   // Current MSCCL doesn't support pre/post op
-  if (param->op == ncclAvg) {
+  if (param->op >= ncclAvg) {
     return ncclSuccess;
   }
 
