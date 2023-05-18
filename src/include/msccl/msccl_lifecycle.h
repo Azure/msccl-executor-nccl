@@ -18,7 +18,11 @@ bool mscclIsCaller();
 
 bool mscclAvailable();
 
+int getEnvInt(const char* env, int64_t deftVal);
+
 ncclResult_t mscclInit(ncclComm_t comm);
+
+ncclResult_t mscclInitKernelsForDevice(int cudaArch, size_t* maxStackSize);
 
 ncclResult_t mscclGroupStart();
 

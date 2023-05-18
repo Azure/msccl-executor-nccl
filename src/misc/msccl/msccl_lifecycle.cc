@@ -23,10 +23,19 @@
 #include "msccl/msccl_status.h"
 
 NCCL_PARAM(MscclEnabled, "MSCCL_ENABLE", 1);
-static const char* mscclAlgoFilePathEnv = "MSCCL_ALGO_FILE_PATH";
 static std::atomic<bool> mscclInitialized;
 static bool mscclSchedulerTriedLoadAlgo = false;
 static std::mutex mscclLifecycleMutex;
+
+int getEnvInt(const char* env, int64_t deftVal) {
+  char* str = getenv(env);
+  int64_t value = deftVal;
+  if (str && strlen(str) > 0) {
+    errno = 0;
+    value = strtoll(str, nullptr, 0);
+  }
+  return value;
+}
 
 bool mscclEnabled() {
   return ncclParamMscclEnabled();
@@ -177,6 +186,17 @@ ncclResult_t mscclInit(ncclComm_t comm) {
     mscclInitialized.store(true, std::memory_order_release);
   }
 
+
+  size_t maxLocalSizeBytes = 0, mscclMaxLocalSizeBytes = 0;
+  cudaDeviceGetLimit(&maxLocalSizeBytes, cudaLimitStackSize);
+  NCCLCHECK(mscclInitKernelsForDevice(comm->cudaArch, &mscclMaxLocalSizeBytes));
+  if (mscclMaxLocalSizeBytes > maxLocalSizeBytes && getEnvInt("NCCL_SET_STACK_SIZE", 0) == 1) {
+    // Reset the maximum kernel stack size of all msccl kernels to avoid
+    // a CUDA memory reconfig on load (c.f. NVSHMEM issue)
+    TRACE(NCCL_INIT, "Msccl Resetting cudaLimitStackSize to %zi", mscclMaxLocalSizeBytes);
+    CUDACHECKIGNORE(cudaDeviceSetLimit(cudaLimitStackSize, mscclMaxLocalSizeBytes));
+  }
+
   INFO(NCCL_INIT, "MSCCL: Initialization finished");
   return ncclSuccess;
 }
@@ -193,6 +213,11 @@ ncclResult_t mscclGroupStart() {
 static ncclResult_t mscclInternalSchedulerSelectAlgo(struct mscclSchedulerParam* param) {
   mscclStatus& status = mscclGetStatus();
   param->scheduled = false;
+
+  // Current MSCCL doesn't support pre/post op
+  if (param->op == ncclAvg) {
+    return ncclSuccess;
+  }
 
   // Whether the algorithm is in-place
   bool isInPlace = false;

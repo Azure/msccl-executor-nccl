@@ -153,6 +153,8 @@ static ncclResult_t hostToDevRedOp(
     half f16;
     #if defined(__CUDA_BF16_TYPES_EXIST__)
       __nv_bfloat16 bf16;
+      __nv_fp8_e4m3 fp8_e4m3;
+      __nv_fp8_e5m2 fp8_e5m2;
     #endif
     float f32;
     double f64;
@@ -180,6 +182,14 @@ static ncclResult_t hostToDevRedOp(
     case ncclBfloat16:
       opFull->op = ncclDevPreMulSum;
       bf16 = (__nv_bfloat16)(float(1.0/comm->nRanks));
+      break;
+    case ncclFp8E4M3:
+      opFull->op = ncclDevPreMulSum;
+      fp8_e4m3 = (__nv_fp8_e4m3)(float(1.0/comm->nRanks));
+      break;
+    case ncclFp8E5M2:
+      opFull->op = ncclDevPreMulSum;
+      fp8_e5m2 = (__nv_fp8_e5m2)(float(1.0/comm->nRanks));
       break;
     #endif
     case ncclFloat32:
@@ -242,19 +252,60 @@ static ncclResult_t hostToDevRedOp(
   MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_NULL()
 
 #define MSCCL_KERNEL_ENTRY() \
   MSCCL_KERNEL_ENTRY_DEVREDOP(Sum), \
   MSCCL_KERNEL_ENTRY_DEVREDOP(Prod), \
-  MSCCL_KERNEL_ENTRY_DEVREDOP(Min), \
   MSCCL_KERNEL_ENTRY_DEVREDOP(Max), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP(Min), \
   MSCCL_KERNEL_ENTRY_DEVREDOP(PreMulSum), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_NOFLOAT(SumPostDiv)
 
 void* mscclKernelEntries[ncclNumDevRedOps * ncclNumTypes * NCCL_NUM_PROTOCOLS] = {
   MSCCL_KERNEL_ENTRY()
 };
+
+// Returns maximum kernel stack size of all CUDA kernels
+ncclResult_t mscclInitKernelsForDevice(int cudaArch, size_t* maxStackSize) {
+  constexpr int KernelCount = ncclNumDevRedOps * ncclNumTypes * NCCL_NUM_PROTOCOLS;
+  ncclResult_t result = ncclSuccess;
+
+  if (maxStackSize) *maxStackSize = 0;
+  int carveout = getEnvInt("NCCL_L1_SHARED_MEMORY_CARVEOUT", 0);
+  // Keep track if we already visited a function pointer.
+  void* lru[2] = {nullptr, nullptr};
+  for (int i=0; i < KernelCount; i++) {
+    void* fn = mscclKernelEntries[i];
+    if (fn == lru[0] || fn == lru[1] || fn == nullptr) goto next_kernel;
+    lru[1] = lru[0];
+    lru[0] = fn;
+
+    if (maxStackSize) {
+      cudaFuncAttributes attr = {0};
+      CUDACHECKGOTO(cudaFuncGetAttributes(&attr, fn), result, ignore0);
+      if (attr.localSizeBytes > *maxStackSize) *maxStackSize = attr.localSizeBytes;
+    ignore0:;
+    }
+
+    if (carveout) {
+      CUDACHECKGOTO(cudaFuncSetAttribute(fn,
+        cudaFuncAttributePreferredSharedMemoryCarveout, carveout),
+        result, ignore1);
+    ignore1:;
+    }
+
+    if (ncclShmemDynamicSize(cudaArch) != 0) {
+      CUDACHECKGOTO(cudaFuncSetAttribute(fn,
+        cudaFuncAttributeMaxDynamicSharedMemorySize, ncclShmemDynamicSize(cudaArch)),
+        result, next_kernel);
+    }
+  next_kernel:;
+  }
+  return result;
+}
 
 ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count,
     ncclDataType_t dataType, ncclRedOp_t op, struct mscclAlgo* hostAlgo, struct mscclAlgo* devAlgo,
@@ -276,7 +327,7 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   {
     block = {NCCL_MAX_NTHREADS, 1, 1};
   }
-  ncclDevRedOpFull opFull;
+  struct ncclDevRedOpFull opFull;
   NCCLCHECK(hostToDevRedOp(&opFull, op, dataType, comm));
   size_t smem = ncclShmemDynamicSize(comm->cudaArch);
   
@@ -295,8 +346,56 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   TRACE("MSCCL: Setup Kernel finished, smem %ld", smem);
   void *args[3] = {&comm->devComm, &devAlgo, &work};
   void *func = mscclKernelEntries[(opFull.op * ncclNumTypes + dataType) * NCCL_NUM_PROTOCOLS + hostAlgo->protocol];
-  //A100 SUPPORT max shared memory of 163KB.
-  CUDACHECK(cudaLaunchKernel(func, grid, block, args, smem/hostAlgo->nBlocks, stream));
+
+  #if 0
+  // #if CUDART_VERSION >= 11080
+  int driverVersion;
+  NCCLCHECK(ncclCudaDriverVersion(&driverVersion));
+  if (driverVersion >= 11080) {
+    int compCap = comm->compCap;
+    unsigned int clusterSize = (compCap == 90) ? comm->cgaClusterSize : 0;
+
+    cudaLaunchConfig_t launchConfig = {0};
+    cudaLaunchAttribute launchAttrs[3];
+    int attrs = 0;
+    /* Cooperative Group Array (CGA)
+     * On sm90 and later we have an extra level of hierarchy where we
+     * can group together several blocks within the Grid, called
+     * Thread Block Clusters.
+     * Clusters enable multiple thread blocks running concurrently
+     * across multiple SMs to synchronize and collaboratively fetch
+     * and exchange data. A cluster of blocks are guaranteed to be
+     * concurrently scheduled onto a group of SMs.
+     * The maximum value is 8 and it must be divisible into the grid dimensions
+     */
+    if (clusterSize) {
+      // Grid dimension must be divisible by clusterSize
+      if (grid.x % clusterSize) clusterSize = 1;
+      launchAttrs[attrs].id = cudaLaunchAttributeClusterDimension;
+      launchAttrs[attrs++].val.clusterDim = {clusterSize, 1, 1};
+      launchAttrs[attrs].id = cudaLaunchAttributeClusterSchedulingPolicyPreference;
+      launchAttrs[attrs++].val.clusterSchedulingPolicyPreference = cudaClusterSchedulingPolicySpread;
+    }
+    #if CUDART_VERSION >= 12000
+    if (compCap >= 90 && driverVersion >= 12000) {
+      // Set the NCCL Mem Sync domain on CUDA 12.0 and later (sm90)
+      launchAttrs[attrs].id = cudaLaunchAttributeMemSyncDomain;
+      launchAttrs[attrs++].val.memSyncDomain = (cudaLaunchMemSyncDomain) ncclParamMemSyncDomain();
+    }
+    #endif
+    launchConfig.gridDim = grid;
+    launchConfig.blockDim = block;
+    launchConfig.dynamicSmemBytes = smem;
+    launchConfig.attrs = launchAttrs;
+    launchConfig.numAttrs = attrs;
+    launchConfig.stream = stream;
+
+    CUDACHECK(cudaLaunchKernelExC(&launchConfig, func, args));
+    return ncclSuccess;
+  }
+  #endif
+  
+  CUDACHECK(cudaLaunchKernel(func, grid, block, args, smem, stream));
   status.workIndex++;
   status.lastStream = stream;
   return ncclSuccess;
