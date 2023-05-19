@@ -29,6 +29,7 @@ declare WARM_UP_COUNT
 MSCCL_TOOL=$HOME/msccl-tools/examples/mscclang
 MSCCL_ALGO_PATH=$HOME/msccl-algo
 TESTRESULT_HOME=$HOME/msccl-test-results
+NCCL_TEST_ORIGIN=$HOME/nccl-tests-original
 
 TEST_TYPE=${1:-perf}
 NUM_GPUS=${2:-8}
@@ -65,6 +66,12 @@ elif [ $TEST_TYPE = "perf" ]; then
     WARM_UP_COUNT=0
     ITERATION_COUNT=100
     TEST_RESULT_SUB_PATH=$(date +"%m.%d")-perf
+    if [ ! -d "$NCCL_TEST_ORIGIN" ]; then
+        mkdir $NCCL_TEST_ORIGIN
+        cd $NCCL_TEST_ORIGIN
+        git clone https://github.com/NVIDIA/nccl-tests.git
+        cd $HOME
+    fi
 else
     echo "The test type: $TEST_TYPE is not supported"
     exit 1
@@ -82,17 +89,25 @@ fi
 
 for lib in ${NCCL_LIB[@]}; do
     if [ $lib = "MSCCL-212" ]; then
+        if [ ! -d "$HOME/msccl" ]; then
+            git clone https://github.com/microsoft/msccl.git
+        fi
         MSCCL_PATH=$HOME/msccl/build
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
         MSCCL_XML_FILES="-x MSCCL_XML_FILES=$MSCCL_ALGO_TEST_PATH/test.xml"
         NCCL_ALGO=MSCCL,RING,TREE
-        NCCL_TESTS_PATH=$HOME/nccl-tests-original/nccl-tests
+        NCCL_TESTS_PATH=$NCCL_TEST_ORIGIN/nccl-tests
     elif [ $lib = "NCCL-217" ]; then
+        if [ ! -d "$HOME/nccl-217" ]; then
+            wget https://github.com/NVIDIA/nccl/archive/refs/tags/v2.17.1-1.zip
+            mkdir -p $HOME/nccl-217
+            unzip -j v2.17.1-1.zip -d $HOME/nccl-217
+        fi
         MSCCL_PATH=$HOME/nccl-217/build
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
         MSCCL_XML_FILES=""
         NCCL_ALGO=RING,TREE
-        NCCL_TESTS_PATH=$HOME/nccl-tests-original/nccl-tests
+        NCCL_TESTS_PATH=$NCCL_TEST_ORIGIN/nccl-tests
     else
         MSCCL_PATH=$HOME/nccl/build
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
