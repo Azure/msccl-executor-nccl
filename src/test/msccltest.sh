@@ -100,8 +100,10 @@ for lib in ${NCCL_LIB[@]}; do
     elif [ $lib = "NCCL-217" ]; then
         if [ ! -d "$HOME/nccl-217" ]; then
             wget https://github.com/NVIDIA/nccl/archive/refs/tags/v2.17.1-1.zip
+            unzip v2.17.1-1.zip
             mkdir -p $HOME/nccl-217
-            unzip -j v2.17.1-1.zip -d $HOME/nccl-217
+            mv nccl-2.17.1-1/* $HOME/nccl-217
+            rmdir nccl-2.17.1-1
         fi
         MSCCL_PATH=$HOME/nccl-217/build
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
