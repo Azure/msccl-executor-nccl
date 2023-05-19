@@ -93,6 +93,11 @@ for lib in ${NCCL_LIB[@]}; do
             git clone https://github.com/microsoft/msccl.git
         fi
         MSCCL_PATH=$HOME/msccl/build
+        if [ ! -d "MSCCL_PATH" ]; then
+            cd msccl
+            make -j src.build NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80"
+            cd ..
+        fi
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
         MSCCL_XML_FILES="-x MSCCL_XML_FILES=$MSCCL_ALGO_TEST_PATH/test.xml"
         NCCL_ALGO=MSCCL,RING,TREE
@@ -106,12 +111,22 @@ for lib in ${NCCL_LIB[@]}; do
             rmdir nccl-2.17.1-1
         fi
         MSCCL_PATH=$HOME/nccl-217/build
+        if [ ! -d "$MSCCL_PATH" ]; then
+            cd $HOME/nccl-217
+            make -j src.build NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80"
+            cd ..
+        fi
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
         MSCCL_XML_FILES=""
         NCCL_ALGO=RING,TREE
         NCCL_TESTS_PATH=$NCCL_TEST_ORIGIN/nccl-tests
     else
         MSCCL_PATH=$HOME/nccl/build
+        if [ ! -d "$MSCCL_PATH" ]; then
+            cd $HOME/nccl
+            make -j src.build NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80"
+            cd ..
+        fi
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
         MSCCL_XML_FILES=""
         NCCL_ALGO=MSCCL,RING,TREE
