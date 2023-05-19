@@ -84,7 +84,7 @@ fi
 TESTRESULT_HOME=$TESTRESULT_HOME/$TEST_RESULT_SUB_PATH
 
 if [ ! -d "$TESTRESULT_HOME" ]; then
-    mkdir $TESTRESULT_HOME
+    mkdir -p $TESTRESULT_HOME
 fi
 
 for lib in ${NCCL_LIB[@]}; do
@@ -126,7 +126,7 @@ for lib in ${NCCL_LIB[@]}; do
     cd ..
 
     if [ ! -d "$MSCCL_ALGO_TEST_PATH" ]; then
-    mkdir $MSCCL_ALGO_TEST_PATH
+        mkdir $MSCCL_ALGO_TEST_PATH
     fi
 
     for algo in ${MSCCL_ALGOS[@]}; do
