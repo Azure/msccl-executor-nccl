@@ -9,7 +9,7 @@ echo ""
 declare MSCCL_PROTO
 declare MSCCL_DATA_TYPE 
 declare MSCCL_OP_TYPE
-declare MSCCL_XML_FILES
+declare MSCCL_XML_FILES_PARAM
 declare MSCCL_ALGOS
 declare MSCCL_PATH
 declare NCCL_LIB
@@ -18,8 +18,10 @@ declare NCCL_TESTS_PATH
 declare TEST_RESULT_SUB_PATH
 declare MSCCL_ALGO_TEST_PATH
 declare ITERATION_COUNT
-declare TOPO_FILE
-declare GRAPH_FILE
+declare TOPO_FILE_PARAM
+declare GRAPH_FILE_PARAM
+declare CUDA_VERSION
+declare CUDA_ARCH_CODE
 
 #test cases
 declare NCCL_P2P
@@ -41,8 +43,8 @@ if ! [[ $NUM_GPUS =~ ^[0-9]+$ && $NUM_GPUS -ge 1 && $NUM_GPUS -le 8 ]]; then
     echo "invalid input of NUM_GPUS: $NUM_GPUS, should be a number between 1 and 8"
     exit 1
 elif [ $NUM_GPUS -eq 4 ]; then
-    TOPO_FILE=$HOME/nccl/src/test/ncv4/topo.xml
-    GRAPH_FILE=$HOME/nccl/src/test/ncv4/graph.xml
+    TOPO_FILE_PARAM="-x NCCL_TOPO_FILE=$HOME/nccl/src/test/ncv4/topo.xml"
+    GRAPH_FILE_PARAM="-x NCCL_GRAPH_FILE=$HOME/nccl/src/test/ncv4/graph.xml"
 fi
 
 if [ $TEST_TYPE = "all" ]; then
@@ -83,8 +85,22 @@ else
     exit 1
 fi
 
+CUDA_VERSION=$(nvidia-smi | grep "CUDA Version:" | awk '{print $9}')
+if [ $(echo "$CUDA_VERSION >= 12.1" | bc) -eq 1 ]; then
+    CUDA_ARCH_CODE=90
+else
+    CUDA_ARCH_CODE=80
+fi
+
 if [ ! -d "$MSCCL_ALGO_PATH" ]; then
     mkdir $MSCCL_ALGO_PATH
+fi
+
+if [ ! -d "$MSCCL_TOOL" ]; then
+    git clone https://github.com/microsoft/msccl-tools.git
+    cd msccl-tools
+    pip install .
+    cd ..
 fi
 
 TESTRESULT_HOME=$TESTRESULT_HOME/$TEST_RESULT_SUB_PATH
@@ -101,11 +117,11 @@ for lib in ${NCCL_LIB[@]}; do
         MSCCL_PATH=$HOME/msccl/build
         if [ ! -d "MSCCL_PATH" ]; then
             cd msccl
-            make -j src.build NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80"
+            make -j src.build NVCC_GENCODE="-gencode=arch=compute_$CUDA_ARCH_CODE,code=sm_$CUDA_ARCH_CODE"
             cd ..
         fi
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
-        MSCCL_XML_FILES="-x MSCCL_XML_FILES=$MSCCL_ALGO_TEST_PATH/test.xml"
+        MSCCL_XML_FILES_PARAM="-x MSCCL_XML_FILES=$MSCCL_ALGO_TEST_PATH/test.xml"
         NCCL_ALGO=MSCCL,RING,TREE
         NCCL_TESTS_PATH=$NCCL_TEST_ORIGIN/nccl-tests
     elif [ $lib = "NCCL-217" ]; then
@@ -115,29 +131,33 @@ for lib in ${NCCL_LIB[@]}; do
             unzip v2.17.1-1.zip
             mkdir -p $HOME/nccl-217
             mv nccl-2.17.1-1/* $HOME/nccl-217
-            rmdir nccl-2.17.1-1
+            rm -r nccl-2.17.1-1
         fi
         MSCCL_PATH=$HOME/nccl-217/build
         if [ ! -d "$MSCCL_PATH" ]; then
             cd $HOME/nccl-217
-            make -j src.build NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80"
+            make -j src.build NVCC_GENCODE="-gencode=arch=compute_$CUDA_ARCH_CODE,code=sm_$CUDA_ARCH_CODE"
             cd ..
         fi
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
-        MSCCL_XML_FILES=""
+        MSCCL_XML_FILES_PARAM=""
         NCCL_ALGO=RING,TREE
         NCCL_TESTS_PATH=$NCCL_TEST_ORIGIN/nccl-tests
     else
         MSCCL_PATH=$HOME/nccl/build
         if [ ! -d "$MSCCL_PATH" ]; then
             cd $HOME/nccl
-            make -j src.build NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80"
+            make -j src.build NVCC_GENCODE="-gencode=arch=compute_$CUDA_ARCH_CODE,code=sm_$CUDA_ARCH_CODE"
             cd ..
         fi
         MSCCL_ALGO_TEST_PATH=$MSCCL_PATH/lib/msccl-algorithms
-        MSCCL_XML_FILES=""
+        MSCCL_XML_FILES_PARAM=""
         NCCL_ALGO=MSCCL,RING,TREE
         NCCL_TESTS_PATH=$HOME/nccl-tests
+        if [ ! -d "$NCCL_TESTS_PATH" ]; then
+            cd $HOME
+            git clone --branch users/liand/enable-msccl-on-nccl https://github.com/C-AI-Inference-Platform/nccl-tests.git
+        fi
     fi
     echo "Compiling the nccl test tool with $lib"
     cd $NCCL_TESTS_PATH
@@ -185,9 +205,9 @@ for lib in ${NCCL_LIB[@]}; do
                                     testresult=$TESTRESULT_HOME/${algo}_${proto}_${NCCL_P2P_DISABLE}_${NCCL_SHM_DISABLE}_${ENABLE_CUDA_GRAPH}_${ENABLE_ONE_PROCESS}_${DATA_TYPE}_${OP_TYPE}_${lib}.txt
                                     echo "Running the $algo with $proto with configs: NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE, NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE, ENABLE_CUDA_GRAPH=$ENABLE_CUDA_GRAPH, ENABLE_ONE_PROCESS=$ENABLE_ONE_PROCESS, DATA_TYPE=$DATA_TYPE, OP_TYPE=$OP_TYPE"
                                     if [ $ENABLE_ONE_PROCESS -eq 1 ]; then
-                                       msccl_test="mpirun --allow-run-as-root -np 1 -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE -x NCCL_GRAPH_FILE=$GRAPH_FILE -x NCCL_TOPO_FILE=$TOPO_FILE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b 5K -e 320K -d $DATA_TYPE -f 2 -g $NUM_GPUS -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
+                                       msccl_test="mpirun --allow-run-as-root -np 1 -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES_PARAM -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $TOPO_FILE_PARAM $GRAPH_FILE_PARAM $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b 5K -e 320K -d $DATA_TYPE -f 2 -g $NUM_GPUS -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     else
-                                       msccl_test="mpirun --allow-run-as-root -np $NUM_GPUS -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE -x NCCL_GRAPH_FILE=$GRAPH_FILE -x NCCL_TOPO_FILE=$TOPO_FILE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b 5K -e 320K -d $DATA_TYPE -f 2 -g 1 -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
+                                       msccl_test="mpirun --allow-run-as-root -np $NUM_GPUS -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES_PARAM -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $TOPO_FILE_PARAM $GRAPH_FILE_PARAM $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b 5K -e 320K -d $DATA_TYPE -f 2 -g 1 -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     fi
                                     if [ ! -e $testresult ]; then
                                         echo $msccl_test | tee $testresult
