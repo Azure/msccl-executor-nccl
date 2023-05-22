@@ -18,6 +18,8 @@ declare NCCL_TESTS_PATH
 declare TEST_RESULT_SUB_PATH
 declare MSCCL_ALGO_TEST_PATH
 declare ITERATION_COUNT
+declare TOPO_FILE
+declare GRAPH_FILE
 
 #test cases
 declare NCCL_P2P
@@ -31,12 +33,16 @@ MSCCL_ALGO_PATH=$HOME/msccl-algo
 TESTRESULT_HOME=$HOME/msccl-test-results
 NCCL_TEST_ORIGIN=$HOME/nccl-tests-original
 
+
 TEST_TYPE=${1:-perf}
 NUM_GPUS=${2:-8}
 
 if ! [[ $NUM_GPUS =~ ^[0-9]+$ && $NUM_GPUS -ge 1 && $NUM_GPUS -le 8 ]]; then
     echo "invalid input of NUM_GPUS: $NUM_GPUS, should be a number between 1 and 8"
     exit 1
+elif [ $NUM_GPUS -eq 4 ]; then
+    TOPO_FILE=$HOME/nccl/src/test/ncv4/topo.xml
+    GRAPH_FILE=$HOME/nccl/src/test/ncv4/graph.xml
 fi
 
 if [ $TEST_TYPE = "all" ]; then
@@ -104,6 +110,7 @@ for lib in ${NCCL_LIB[@]}; do
         NCCL_TESTS_PATH=$NCCL_TEST_ORIGIN/nccl-tests
     elif [ $lib = "NCCL-217" ]; then
         if [ ! -d "$HOME/nccl-217" ]; then
+            cd $HOME
             wget https://github.com/NVIDIA/nccl/archive/refs/tags/v2.17.1-1.zip
             unzip v2.17.1-1.zip
             mkdir -p $HOME/nccl-217
@@ -178,9 +185,9 @@ for lib in ${NCCL_LIB[@]}; do
                                     testresult=$TESTRESULT_HOME/${algo}_${proto}_${NCCL_P2P_DISABLE}_${NCCL_SHM_DISABLE}_${ENABLE_CUDA_GRAPH}_${ENABLE_ONE_PROCESS}_${DATA_TYPE}_${OP_TYPE}_${lib}.txt
                                     echo "Running the $algo with $proto with configs: NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE, NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE, ENABLE_CUDA_GRAPH=$ENABLE_CUDA_GRAPH, ENABLE_ONE_PROCESS=$ENABLE_ONE_PROCESS, DATA_TYPE=$DATA_TYPE, OP_TYPE=$OP_TYPE"
                                     if [ $ENABLE_ONE_PROCESS -eq 1 ]; then
-                                       msccl_test="mpirun --allow-run-as-root -np 1 -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b 5K -e 320K -d $DATA_TYPE -f 2 -g $NUM_GPUS -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
+                                       msccl_test="mpirun --allow-run-as-root -np 1 -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE -x NCCL_GRAPH_FILE=$GRAPH_FILE -x NCCL_TOPO_FILE=$TOPO_FILE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b 5K -e 320K -d $DATA_TYPE -f 2 -g $NUM_GPUS -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     else
-                                       msccl_test="mpirun --allow-run-as-root -np $NUM_GPUS -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b 5K -e 320K -d $DATA_TYPE -f 2 -g 1 -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
+                                       msccl_test="mpirun --allow-run-as-root -np $NUM_GPUS -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE -x NCCL_GRAPH_FILE=$GRAPH_FILE -x NCCL_TOPO_FILE=$TOPO_FILE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b 5K -e 320K -d $DATA_TYPE -f 2 -g 1 -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     fi
                                     if [ ! -e $testresult ]; then
                                         echo $msccl_test | tee $testresult
