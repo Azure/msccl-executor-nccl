@@ -47,6 +47,8 @@ ncclResult_t mscclRunAlgo(
   mscclStatus& status = mscclGetStatus();
   struct mscclAlgo* hostAlgo = status.hostAlgos[mscclAlgoHandle];
   struct mscclAlgo* devAlgo = status.devAlgos[mscclAlgoHandle];
+  
+  NCCLCHECK(mscclGetCaptureStatus(stream));
 
   NCCLCHECK(mscclSetupCount(hostAlgo, comm, count, dataType));
 
@@ -59,10 +61,10 @@ ncclResult_t mscclRunAlgo(
     status.connectedAlgos[comm].insert(mscclAlgoHandle);
   }
 
-  NCCLCHECK(mscclSetupProxy(hostAlgo, comm));
+  NCCLCHECK(mscclSetupProxy(hostAlgo, comm, stream));
 
   NCCLCHECK(mscclSetupKernel(sendBuff, recvBuff, count, dataType, op, hostAlgo, devAlgo, comm, stream));
-
+ 
   return ncclSuccess;
 }
 

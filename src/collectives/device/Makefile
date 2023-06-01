@@ -21,6 +21,10 @@ DEVOBJ     := $(OBJDIR)/devlink.o
 RULESFILE  := $(OBJDIR)/Makefile.rules
 
 NVCUFLAGS  += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl --compiler-options "-fPIC -fvisibility=hidden"
+#below flags are used for debug purpose
+#NVCUFLAGS  += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl -g -G -src-in-ptx --compiler-options "-fPIC"
+#NVCUFLAGS  += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl -g -G -lineinfo -src-in-ptx --compiler-options "-fPIC"
+#
 
 
 all: $(STATICLIB)

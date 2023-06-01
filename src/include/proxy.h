@@ -267,6 +267,6 @@ ncclResult_t ncclProxyDestroy(struct ncclComm* comm);
 ncclResult_t ncclProxyShmUnlink(struct ncclComm* comm);
 
 enum { proxyRecv=0, proxySend=1 };
-ncclResult_t mscclSaveProxy(struct ncclChannel* channel, int type, int peer, struct ncclProxyOp* op, int connIndex);
+ncclResult_t mscclSaveProxy(struct ncclChannel* channel, int type, int peer, struct ncclProxyOp* op, int connIndex, bool* justInquire);
 
 #endif

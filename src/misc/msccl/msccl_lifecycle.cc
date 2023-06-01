@@ -160,6 +160,8 @@ ncclResult_t mscclInit(ncclComm_t comm) {
   mscclThreadLocalStatus threadLocalStatus = mscclGetThreadLocalStatus();
   threadLocalStatus.groupStatus = mscclNoGroup;
   threadLocalStatus.groupDepth = 0;
+  threadLocalStatus.captureId = ULLONG_MAX;
+  threadLocalStatus.captureStatus = mscclNoCapture;
   comm->mscclCompatible = mscclCommCompatible(comm);
 
   {
@@ -218,6 +220,7 @@ static ncclResult_t mscclInternalSchedulerSelectAlgo(struct mscclSchedulerParam*
   if (param->op >= ncclAvg) {
     return ncclSuccess;
   }
+  //nccl imp: ncclRedOp_t netOp = info->op == ncclAvg || info->op >= ncclNumOps ? ncclSum : info->op;
 
   // Whether the algorithm is in-place
   bool isInPlace = false;
