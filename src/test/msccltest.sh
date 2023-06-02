@@ -39,8 +39,8 @@ NCCL_TEST_ORIGIN=$HOME/nccl-tests-original
 TEST_TYPE=${1:-perf}
 NUM_GPUS=${2:-8}
 
-if ! [[ $NUM_GPUS =~ ^[0-9]+$ && $NUM_GPUS -ge 1 && $NUM_GPUS -le 8 ]]; then
-    echo "invalid input of NUM_GPUS: $NUM_GPUS, should be a number between 1 and 8"
+if ! [[ $NUM_GPUS =~ ^[0-9]+$ && $NUM_GPUS -ge 1 && $NUM_GPUS -le 16 ]]; then
+    echo "invalid input of NUM_GPUS: $NUM_GPUS, should be a number between 1 and 16"
     exit 1
 elif [ $NUM_GPUS -eq 4 ]; then
     TOPO_FILE_PARAM="-x NCCL_TOPO_FILE=$HOME/nccl/src/test/ncv4/topo.xml"
@@ -144,9 +144,9 @@ for lib in ${NCCL_LIB[@]}; do
         NCCL_ALGO=RING,TREE
         NCCL_TESTS_PATH=$NCCL_TEST_ORIGIN/nccl-tests
     else
-        MSCCL_PATH=$HOME/nccl/build
+        MSCCL_PATH=$HOME/nccl217/build
         if [ ! -d "$MSCCL_PATH" ]; then
-            cd $HOME/nccl
+            cd $HOME/nccl217
             make -j src.build NVCC_GENCODE="-gencode=arch=compute_$CUDA_ARCH_CODE,code=sm_$CUDA_ARCH_CODE"
             cd ..
         fi
