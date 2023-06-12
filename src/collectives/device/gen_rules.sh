@@ -9,7 +9,7 @@
 dir=$1
 
 datatypes="i8 u8 i32 u32 i64 u64 f16 f32 f64"
-if [ "$CUDA_MAJOR" -ge 11 ] && [ "$CUDA_MINOR" -ge 8 ]
+if [ "$CUDA_MAJOR" -gt 11 ] || ([ "$CUDA_MAJOR" -eq 11 ] && [ "$CUDA_MINOR" -ge 8 ])
 then
     datatypes+=" bf16 fp8_e4m3 fp8_e5m2"
 elif [ "$CUDA_MAJOR" -ge 11 ]
