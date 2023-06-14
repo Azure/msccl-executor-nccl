@@ -34,7 +34,7 @@ MSCCL_TOOL=$HOME/msccl-tools/examples/mscclang
 MSCCL_ALGO_PATH=$HOME/msccl-algo
 TESTRESULT_HOME=$HOME/msccl-test-results
 NCCL_TEST_ORIGIN=$HOME/nccl-tests-original
-MSCCL_HOME=$HOME/nccl-218/nccl
+MSCCL_HOME=$HOME/nccl
 
 TEST_TYPE=${1:-perf}
 NUM_GPUS=${2:-8}
@@ -65,10 +65,9 @@ elif [ $TEST_TYPE = "perf" ]; then
     MSCCL_PROTO=(LL LL128 Simple) 
     MSCCL_DATA_TYPE=(float half bfloat16 fp8_e4m3 fp8_e5m2)
     MSCCL_OP_TYPE=(sum)
-    # NCCL_LIB=(MSCCL-212 NCCL-218 NCCL-218-WITH-MSCCL)
-    NCCL_LIB=(NCCL-218-WITH-MSCCL)
-    NCCL_P2P=(1)
-    NCCL_SHM=(1)
+    NCCL_LIB=(MSCCL-212 NCCL-218 NCCL-218-WITH-MSCCL)
+    NCCL_P2P=(0 1)
+    NCCL_SHM=(0 1)
     CUDA_GRAPH=(0 1)
     ONE_PROCESS=(0)
     WARM_UP_COUNT=0
@@ -85,11 +84,23 @@ else
     exit 1
 fi
 
+# Special case for ncv4
+# ncv4 spec as below
+# GPU =4
+# IB = NONE
+# CUDA = 11.4 (non fp8 support)
+if [ $NUM_GPUS = "4" ]; then
+  NCCL_P2P=(0)
+  NCCL_SHM=(0)
+  MSCCL_DATA_TYPE=("${MSCCL_DATA_TYPE[@]/fp8_e4m3}")
+  MSCCL_DATA_TYPE=("${MSCCL_DATA_TYPE[@]/fp8_e5m2}")
+fi
+
 CUDA_VERSION=$(nvidia-smi | grep "CUDA Version:" | awk '{print $9}')
 if [ $(echo "$CUDA_VERSION >= 12.1" | bc) -eq 1 ]; then
-    CUDA_ARCH_CODE=90
+    CUDA_ARCH_CODE=90 #H100 GPU
 else
-    CUDA_ARCH_CODE=80
+    CUDA_ARCH_CODE=80 #A100 GPU
 fi
 
 if [ ! -d "$MSCCL_ALGO_PATH" ]; then
@@ -108,6 +119,11 @@ TESTRESULT_HOME=$TESTRESULT_HOME/$TEST_RESULT_SUB_PATH
 if [ ! -d "$TESTRESULT_HOME" ]; then
     mkdir -p $TESTRESULT_HOME
 fi
+
+#Other variable temporarily overrides
+MSCCL_DATA_TYPE=(float half bfloat16)
+NCCL_LIB=(NCCL-218-WITH-MSCCL)
+
 
 for lib in ${NCCL_LIB[@]}; do
     if [ $lib = "MSCCL-212" ]; then
