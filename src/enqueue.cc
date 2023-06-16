@@ -41,6 +41,12 @@ struct ncclKernelMatch {
   #define HAVE_BFLOAT16 0
 #endif
 
+#ifdef __CUDA_FP8_TYPES_EXIST__
+  #define HAVE_FP8 1
+#else
+  #define HAVE_FP8 0
+#endif
+
 // Must be consistent with ncclDataType_t
 #define NCCL_FUNCS3(func, devredop, reduction, specialized) \
   NCCL_FUNC4(func, devredop, MACRO_IF(reduction, int8_t, int8_t), specialized), \
@@ -56,11 +62,11 @@ struct ncclKernelMatch {
     SINGLE_ARG(, NCCL_FUNC4(func, devredop, MACRO_IF(reduction, __nv_bfloat16, int8_t), specialized)), \
     /*nothing*/ \
   ) \
-  MACRO_IF(HAVE_BFLOAT16, \
+  MACRO_IF(HAVE_FP8, \
     SINGLE_ARG(, NCCL_FUNC4(func, devredop, MACRO_IF(reduction, __nv_fp8_e4m3, int8_t), specialized)), \
     /*nothing*/ \
   ) \
-  MACRO_IF(HAVE_BFLOAT16, \
+  MACRO_IF(HAVE_FP8, \
     SINGLE_ARG(, NCCL_FUNC4(func, devredop, MACRO_IF(reduction, __nv_fp8_e5m2, int8_t), specialized)), \
     /*nothing*/ \
   )
@@ -89,6 +95,8 @@ static const ncclKernelMatch ncclKerns[1+ncclNumTypes+NCCL_NUM_FUNCTIONS*ncclNum
   {/*double*/(void*)NCCL_KERN_NAME(SendRecv, RING, SIMPLE, Sum, int8_t), false},
   #if HAVE_BFLOAT16
     {/*bfloat16*/(void*)NCCL_KERN_NAME(SendRecv, RING, SIMPLE, Sum, int8_t), false},
+  #endif
+  #if HAVE_FP8
     {/*fp8_e4m3*/(void*)NCCL_KERN_NAME(SendRecv, RING, SIMPLE, Sum, int8_t), false},
     {/*fp8_e5m2*/(void*)NCCL_KERN_NAME(SendRecv, RING, SIMPLE, Sum, int8_t), false},
   #endif
@@ -1400,6 +1408,8 @@ static ncclResult_t hostToDevRedOp(
     half f16;
     #if defined(__CUDA_BF16_TYPES_EXIST__)
       __nv_bfloat16 bf16;
+    #endif
+    #if defined(__CUDA_FP8_TYPES_EXIST__)
       __nv_fp8_e4m3 fp8_e4m3;
       __nv_fp8_e5m2 fp8_e5m2;
     #endif
@@ -1430,6 +1440,8 @@ static ncclResult_t hostToDevRedOp(
       opFull->op = ncclDevPreMulSum;
       bf16 = __float2bfloat16(float(1.0/comm->nRanks));
       break;
+    #endif
+    #if defined(__CUDA_FP8_TYPES_EXIST__)
     case ncclFp8E4M3:
       opFull->op = ncclDevPreMulSum;
       fp8_e4m3 = static_cast<__nv_fp8_e4m3>(float(1.0/comm->nRanks));

@@ -62,8 +62,7 @@ ncclResult_t mscclSetupScratch(struct mscclAlgo* hostAlgo, cudaStream_t stream) 
   mscclStatus& status = mscclGetStatus();
   size_t sizeNeeded = (status.nBytes * (size_t)(hostAlgo->nScratchChunks)) / (size_t)(hostAlgo->nChunksPerLoop);
   if (sizeNeeded > status.scratchBufferSize){
-    CUDACHECK(cudaStreamSynchronize(stream));
-    CUDACHECK(cudaFree(status.scratchBuffer));
+    NCCLCHECK(ncclCudaFree(status.scratchBuffer));
     NCCLCHECK(ncclCudaCalloc((char**)&status.scratchBuffer, sizeNeeded));
     status.scratchBufferSize = sizeNeeded;
   }
@@ -72,10 +71,11 @@ ncclResult_t mscclSetupScratch(struct mscclAlgo* hostAlgo, cudaStream_t stream) 
 
 ncclResult_t mscclSetupSyncFlags(cudaStream_t stream) {
   mscclStatus& status = mscclGetStatus();
-  if (mscclGetThreadLocalStatus().captureStatus == mscclNewCapture ||
+  if (status.graphEnabled && status.graphFirstKernel ||
       status.workIndex > (1ULL << (8*sizeof(status.workIndex))) - 2 * NCCL_MAX_OPS - 1) {
     CUDACHECK(cudaMemsetAsync(status.syncFlags, 0, sizeof(struct mscclFlag) * MSCCL_MAX_NUM_THREAD_BLOCKS, stream));
     status.workIndex = 1; // setting the workIndex back to 1 for next iterations
+    status.graphFirstKernel = false;
   }
   return ncclSuccess;
 }
@@ -304,6 +304,8 @@ static ncclResult_t hostToDevRedOp(
     half f16;
     #if defined(__CUDA_BF16_TYPES_EXIST__)
       __nv_bfloat16 bf16;
+    #endif
+    #if defined(__CUDA_FP8_TYPES_EXIST__)
       __nv_fp8_e4m3 fp8_e4m3;
       __nv_fp8_e5m2 fp8_e5m2;
     #endif
@@ -334,6 +336,8 @@ static ncclResult_t hostToDevRedOp(
       opFull->op = ncclDevPreMulSum;
       bf16 = (__nv_bfloat16)(float(1.0/comm->nRanks));
       break;
+    #endif
+     #if defined(__CUDA_FP8_TYPES_EXIST__)
     case ncclFp8E4M3:
       opFull->op = ncclDevPreMulSum;
       fp8_e4m3 = (__nv_fp8_e4m3)(float(1.0/comm->nRanks));
@@ -379,6 +383,7 @@ static ncclResult_t hostToDevRedOp(
   (void *)MSCCL_KERNEL_ENTRY_NAME(devredop, type, LL128), \
   (void *)MSCCL_KERNEL_ENTRY_NAME(devredop, type, Simple)
 
+#if defined(__CUDA_BF16_TYPES_EXIST__) && defined(__CUDA_FP8_TYPES_EXIST__)
 #define MSCCL_KERNEL_ENTRY_DEVREDOP(devredop) \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int8_t), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint8_t), \
@@ -392,7 +397,32 @@ static ncclResult_t hostToDevRedOp(
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, __nv_bfloat16), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, __nv_fp8_e4m3), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, __nv_fp8_e5m2)
+#elif defined(__CUDA_BF16_TYPES_EXIST__)
+#define MSCCL_KERNEL_ENTRY_DEVREDOP(devredop) \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int8_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint8_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int32_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint32_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int64_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint64_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, half), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, float), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, double), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, __nv_bfloat16)
+#else
+#define MSCCL_KERNEL_ENTRY_DEVREDOP(devredop) \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int8_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint8_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int32_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint32_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int64_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint64_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, half), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, float), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, double)
+#endif
 
+#if defined(__CUDA_BF16_TYPES_EXIST__) && defined(__CUDA_FP8_TYPES_EXIST__)
 #define MSCCL_KERNEL_ENTRY_DEVREDOP_NOFLOAT(devredop) \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int8_t), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint8_t), \
@@ -406,6 +436,30 @@ static ncclResult_t hostToDevRedOp(
   MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_NULL()
+#elif defined(__CUDA_BF16_TYPES_EXIST__)
+#define MSCCL_KERNEL_ENTRY_DEVREDOP_NOFLOAT(devredop) \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int8_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint8_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int32_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint32_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int64_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint64_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_NULL()
+#else
+#define MSCCL_KERNEL_ENTRY_DEVREDOP_NOFLOAT(devredop) \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int8_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint8_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int32_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint32_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, int64_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_TYPE(devredop, uint64_t), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_NULL(), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP_NULL()
+#endif
 
 #define MSCCL_KERNEL_ENTRY() \
   MSCCL_KERNEL_ENTRY_DEVREDOP(Sum), \

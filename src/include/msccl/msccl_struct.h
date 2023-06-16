@@ -222,6 +222,8 @@ struct mscclStatus {
   mscclSchedulerInterface* mscclSchedulerPtr;
   std::vector<mscclAlgoMeta> algoMetas;
   std::vector<std::map<int, mscclAlgoHandle_t>> rankToAlgoHandles;
+  bool graphEnabled;
+  bool graphFirstKernel;
 };
 
 struct alignas(16) mscclWork {

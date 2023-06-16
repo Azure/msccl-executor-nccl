@@ -240,6 +240,16 @@ struct Apply_Reduce<FuncSum<int8_t>, /*EltPerPack=*/4> {
   SPECIALIZE_REDUCE(FuncMin, __nv_bfloat16, 2, __nv_bfloat162, __hmin2(x, y))
   SPECIALIZE_REDUCE(FuncMax, __nv_bfloat16, 1, __nv_bfloat16, __hmax(x, y))
   SPECIALIZE_REDUCE(FuncMax, __nv_bfloat16, 2, __nv_bfloat162, __hmax2(x, y))
+#else
+  SPECIALIZE_REDUCE(FuncSum, __nv_bfloat16, 1, __nv_bfloat16, __float2bfloat16(__bfloat162float(x) + __bfloat162float(y)))
+  SPECIALIZE_REDUCE(FuncProd, __nv_bfloat16, 1, __nv_bfloat16, __float2bfloat16(__bfloat162float(x) * __bfloat162float(y)))
+  SPECIALIZE_REDUCE(FuncMin, __nv_bfloat16, 1, __nv_bfloat16, __float2bfloat16(fminf(__bfloat162float(x), __bfloat162float(y))))
+  SPECIALIZE_REDUCE(FuncMax, __nv_bfloat16, 1, __nv_bfloat16, __float2bfloat16(fmaxf(__bfloat162float(x), __bfloat162float(y))))
+#endif
+#endif
+
+#if defined(__CUDA_FP8_TYPES_EXIST__)
+#if __CUDA_ARCH__ >= 800
   SPECIALIZE_REDUCE(FuncSum, __nv_fp8_e4m3, 1, __nv_fp8_e4m3, __nv_fp8_e4m3(__hadd(__half(x),__half(y))))
   SPECIALIZE_REDUCE(FuncSum, __nv_fp8_e4m3, 2, __nv_fp8x2_e4m3, __nv_fp8x2_e4m3(__hadd2(__half2(x),__half2(y))))
   SPECIALIZE_REDUCE(FuncProd, __nv_fp8_e4m3, 1, __nv_fp8_e4m3, __nv_fp8_e4m3(__hmul(__half(x),__half(y))))
@@ -257,10 +267,6 @@ struct Apply_Reduce<FuncSum<int8_t>, /*EltPerPack=*/4> {
   SPECIALIZE_REDUCE(FuncMax, __nv_fp8_e5m2, 1, __nv_fp8_e5m2, __nv_fp8_e5m2(__hmax(__half(x), __half(y))))
   SPECIALIZE_REDUCE(FuncMax, __nv_fp8_e5m2, 2, __nv_fp8x2_e5m2, __nv_fp8x2_e5m2(__hmax2(__half2(x), __half2(y))))
 #else
-  SPECIALIZE_REDUCE(FuncSum, __nv_bfloat16, 1, __nv_bfloat16, __float2bfloat16(__bfloat162float(x) + __bfloat162float(y)))
-  SPECIALIZE_REDUCE(FuncProd, __nv_bfloat16, 1, __nv_bfloat16, __float2bfloat16(__bfloat162float(x) * __bfloat162float(y)))
-  SPECIALIZE_REDUCE(FuncMin, __nv_bfloat16, 1, __nv_bfloat16, __float2bfloat16(fminf(__bfloat162float(x), __bfloat162float(y))))
-  SPECIALIZE_REDUCE(FuncMax, __nv_bfloat16, 1, __nv_bfloat16, __float2bfloat16(fmaxf(__bfloat162float(x), __bfloat162float(y))))
   SPECIALIZE_REDUCE(FuncSum, __nv_fp8_e4m3, 1, __nv_fp8_e4m3, __nv_fp8_e4m3(float(x) + float(y)))
   SPECIALIZE_REDUCE(FuncProd, __nv_fp8_e4m3, 1, __nv_fp8_e4m3, __nv_fp8_e4m3(float(x) * float(y)))
   SPECIALIZE_REDUCE(FuncMin, __nv_fp8_e4m3, 1, __nv_fp8_e4m3, __nv_fp8_e4m3(fminf(float(x), float(y))))
@@ -398,7 +404,9 @@ struct FuncPreMulSum<half> {
     }
   #endif
   };
+#endif
 
+#if defined(__CUDA_FP8_TYPES_EXIST__)
   template<>
   struct FuncPreMulSum<__nv_fp8_e4m3> {
     // Change these to switch between all prescale, all postscale, or both by sqrt(N).
@@ -503,7 +511,9 @@ struct Apply_PreOp<FuncPreMulSum<half>, /*EltPerPack=*/1> {
       }
     };
   #endif
+#endif
 
+#if defined(__CUDA_FP8_TYPES_EXIST__)
   template<>
   struct Apply_PreOp<FuncPreMulSum<__nv_fp8_e4m3>, /*EltPerPack=*/1> {
     static constexpr bool IsIdentity = false;
@@ -563,6 +573,8 @@ struct IsFloatingPoint<half>: std::true_type {};
 #if defined(__CUDA_BF16_TYPES_EXIST__)
 template<>
 struct IsFloatingPoint<__nv_bfloat16>: std::true_type {};
+#endif
+#if defined(__CUDA_FP8_TYPES_EXIST__)
 template<>
 struct IsFloatingPoint<__nv_fp8_e4m3>: std::true_type {};
 template<>
@@ -686,6 +698,8 @@ struct Apply_LoadMultimem {
     DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_bfloat16, add, bf16x2, u32)
     DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_bfloat16, min, bf16x2, u32)
     DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_bfloat16, max, bf16x2, u32)
+  #endif
+  #if defined(__CUDA_FP8_TYPES_EXIST__)  
     DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_fp8_e4m3, add, e4m3x2, u16)
     DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_fp8_e4m3, min, e4m3x2, u16)
     DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_fp8_e4m3, max, e4m3x2, u16)

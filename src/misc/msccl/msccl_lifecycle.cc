@@ -269,11 +269,7 @@ static ncclResult_t mscclSchedulerSelectAlgo(struct mscclSavedSchedulerParam* pa
   if (status.mscclSchedulerPtr) {
     NCCLCHECK(status.mscclSchedulerPtr->selectAlgo(&(param->p)));
   } else {
-    if (param->comm->topo->mscclEnabled) {
-      NCCLCHECK(mscclInternalSchedulerSelectAlgo(&(param->p)));
-    } else {
-      param->p.scheduled = false;
-    }
+    NCCLCHECK(mscclInternalSchedulerSelectAlgo(&(param->p)));
   }
   return ncclSuccess;
 }
@@ -318,8 +314,18 @@ static ncclResult_t mscclSaveCountsAndDispls(struct mscclSavedSchedulerParam* pa
 }
 
 static ncclResult_t mscclRunSavedParams() {
+  mscclStatus& status = mscclGetStatus();
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
-  for (auto& param : threadLocalStatus.savedSchedulerParams) {
+  struct ncclCudaGraph graph;
+
+  for (size_t i = 0; i < threadLocalStatus.savedSchedulerParams.size(); i++) {
+    auto& param = threadLocalStatus.savedSchedulerParams[i];
+    // Get graph status before batch call
+    if (i == 0) {
+      NCCLCHECK(ncclCudaGetCapturingGraph(&graph, param.stream));
+      status.graphEnabled = (graph.graph != nullptr);
+      status.graphFirstKernel = status.graphEnabled;
+    }
     NCCLCHECK(mscclRunAlgo(
       param.p.sendBuff, param.p.sendCounts, param.p.sDisPls,
       param.p.recvBuff, param.p.recvCounts, param.p.rDisPls,

@@ -904,10 +904,7 @@ done:
     graph->bwInter /= DIVUP(dupChannels, graph->nChannels);
     graph->nChannels = dupChannels;
   }
-
-  if (mscclEnabled()) {
-    system->mscclEnabled = true;
-  } 
+ 
   return ncclSuccess;
 }
 
