@@ -22,6 +22,7 @@ declare TOPO_FILE_PARAM
 declare GRAPH_FILE_PARAM
 declare CUDA_VERSION
 declare CUDA_ARCH_CODE
+declare MS_SKU
 
 #test cases
 declare NCCL_P2P
@@ -124,8 +125,10 @@ fi
 CUDA_VERSION=$(nvidia-smi | grep "CUDA Version:" | awk '{print $9}')
 if [ $(echo "$CUDA_VERSION >= 12.1" | bc) -eq 1 ]; then
     CUDA_ARCH_CODE=90 #H100 GPU
+    MS_SKU=ndv5
 else
     CUDA_ARCH_CODE=80 #A100 GPU
+    MS_SKU=ndv4
 fi
 
 if [ ! -d "$MSCCL_ALGO_PATH" ]; then
@@ -258,7 +261,7 @@ for lib in ${NCCL_LIB[@]}; do
                                        msccl_test="mpirun --allow-run-as-root -np 1 -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES_PARAM -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $TOPO_FILE_PARAM $GRAPH_FILE_PARAM $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b $DATA_SIZE_MIN -e $DATA_SIZE_MAX -d $DATA_TYPE -f 2 -g $NUM_GPUS -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     elif [ $NUM_GPUS -eq 16 ]; then
                                        #msccl_test="mpirun --allow-run-as-root --tag-output -map-by ppr:8:node -hostfile $MSCCL_HOME/src/test/ndv5/hostfile -x LD_LIBRARY_PATH -mca coll_hcoll_enable 0 --bind-to none -x NCCL_TOPO_FILE=$MSCCL_HOME/src/test/ndv5/ndv5-topo-new.xml -x NCCL_DEBUG=WARN -x LD_PRELOAD=$MSCCL_PATH/lib/libnccl.so:$LD_PRELOAD -x NCCL_MIN_NCHANNELS=32 -x NCCL_IB_QPS_PER_CONNECTION=2 -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b $DATA_SIZE_MIN -e $DATA_SIZE_MAX -d $DATA_TYPE -f 2 -g 1 -c 1 -w $WARM_UP_COUNT -n $ITERATION_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
-                                       msccl_test="mpirun --allow-run-as-root --tag-output -map-by ppr:8:node -hostfile $MSCCL_HOME/src/test/ndv5/hostfile --bind-to numa -mca pml ob1 -mca btl ^openib -mca btl_tcp_if_include eth0 -x PATH -x LD_PRELOAD=$MSCCL_PATH/lib/libnccl.so:$LD_PRELOAD -x NCCL_IB_PCI_RELAXED_ORDERING=1 -x NCCL_SOCKET_IFNAME=eth0 -x CUDA_DEVICE_ORDER=PCI_BUS_ID -x NCCL_NET_GDR_LEVEL=5 -x NCCL_TOPO_FILE=$MSCCL_HOME/src/test/ndv5/ndv5-topo-new.xml -x NCCL_MIN_NCHANNELS=32 -x NCCL_DEBUG=WARN -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b $DATA_SIZE_MIN -e $DATA_SIZE_MAX -d $DATA_TYPE -f 2 -g 1 -c 1 -w $WARM_UP_COUNT -n $ITERATION_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
+                                       msccl_test="mpirun --allow-run-as-root --tag-output -map-by ppr:8:node -hostfile $MSCCL_HOME/src/test/$MS_SKU/hostfile --bind-to numa -mca pml ob1 -mca btl ^openib -mca btl_tcp_if_include eth0 -x PATH -x LD_PRELOAD=$MSCCL_PATH/lib/libnccl.so:$LD_PRELOAD -x NCCL_IB_PCI_RELAXED_ORDERING=1 -x NCCL_SOCKET_IFNAME=eth0 -x CUDA_DEVICE_ORDER=PCI_BUS_ID -x NCCL_NET_GDR_LEVEL=5 -x NCCL_TOPO_FILE=$MSCCL_HOME/src/test/$MS_SKU/$MS_SKU-topo.xml -x NCCL_MIN_NCHANNELS=32 -x NCCL_DEBUG=WARN -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b $DATA_SIZE_MIN -e $DATA_SIZE_MAX -d $DATA_TYPE -f 2 -g 1 -c 1 -w $WARM_UP_COUNT -n $ITERATION_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     else
                                        msccl_test="mpirun --allow-run-as-root -np $NUM_GPUS -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES_PARAM -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $TOPO_FILE_PARAM $GRAPH_FILE_PARAM $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b $DATA_SIZE_MIN -e $DATA_SIZE_MAX -d $DATA_TYPE -f 2 -g 1 -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     fi
