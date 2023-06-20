@@ -181,6 +181,8 @@ ncclResult_t mscclInit(ncclComm_t comm) {
     }
     NCCLCHECK(ncclCudaCalloc(&status.syncFlags, MSCCL_MAX_NUM_THREAD_BLOCKS));
     status.lastStream = nullptr;
+    status.needsFence = false;
+    status.needsProxy = false;
     mscclSchedulerTriedLoadAlgo = false;
 
     NCCLCHECK(mscclSchedulerInit());
@@ -320,12 +322,6 @@ static ncclResult_t mscclRunSavedParams() {
 
   for (size_t i = 0; i < threadLocalStatus.savedSchedulerParams.size(); i++) {
     auto& param = threadLocalStatus.savedSchedulerParams[i];
-    // Get graph status before batch call
-    if (i == 0) {
-      NCCLCHECK(ncclCudaGetCapturingGraph(&graph, param.stream));
-      status.graphEnabled = (graph.graph != nullptr);
-      status.graphFirstKernel = status.graphEnabled;
-    }
     NCCLCHECK(mscclRunAlgo(
       param.p.sendBuff, param.p.sendCounts, param.p.sDisPls,
       param.p.recvBuff, param.p.recvCounts, param.p.rDisPls,

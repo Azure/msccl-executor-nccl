@@ -28,6 +28,7 @@
 #include "graph/topo.h"
 #include "graph/xml.h"
 #include "msccl/msccl_lifecycle.h"
+#include "msccl/msccl_status.h"
 
 #define STR2(v) #v
 #define STR(v) STR2(v)
@@ -402,9 +403,6 @@ static ncclResult_t devCommSetup(ncclComm_t comm) {
       NCCLCHECKGOTO(ncclCudaMemcpyAsync(tmpCommAndChans.channels[c].ring.userRanks, comm->channels[c].ring.userRanks, nRanks, comm->deviceStream.cudaStream), ret, fail);
     }
   }
-  if (mscclEnabled()) {
-    NCCLCHECK(mscclInit(comm));
-  }
 
   NCCLCHECKGOTO(ncclCudaMemcpyAsync(devCommAndChans, &tmpCommAndChans, 1, comm->deviceStream.cudaStream), ret, fail);
 exit:
@@ -633,6 +631,10 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
   struct ncclProxyConnector proxyConn;
   int* pxnPeers = NULL;
 
+  int highestTransportType = TRANSPORT_P2P;
+  int mscclHighestTransportType = highestTransportType;
+  bool needsProxy = false;
+  bool mscclNeedsProxy = needsProxy;
   TRACE(NCCL_INIT, "comm %p, commHash %lx, rank %d nranks %d - BEGIN", comm, commHash, rank, nranks);
   NCCLCHECKGOTO(bootstrapInit((struct ncclBootstrapHandle*)commId, comm), ret, fail);
 
@@ -910,7 +912,9 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
     if (comm->nRanks == 1) continue;
     NCCLCHECKGOTO(ncclTransportP2pConnect(comm, c, 1, &channel->ring.prev, 1, &channel->ring.next, 0), ret, fail);
   }
-  NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &ringGraph, 0), ret, fail);
+  NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &ringGraph, 0, &highestTransportType, &needsProxy), ret, fail);
+  mscclHighestTransportType = std::max(mscclHighestTransportType, highestTransportType);
+  mscclNeedsProxy |= needsProxy;
   INFO(NCCL_INIT, "Connected all rings");
 
   // Connect Trees
@@ -920,7 +924,9 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
     NCCLCHECKGOTO(ncclTransportP2pConnect(comm, c, NCCL_MAX_TREE_ARITY, channel->tree.down, 1, &channel->tree.up, 0), ret, fail);
     NCCLCHECKGOTO(ncclTransportP2pConnect(comm, c, 1, &channel->tree.up, NCCL_MAX_TREE_ARITY, channel->tree.down, 0), ret, fail);
   }
-  NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &treeGraph, 0), ret, fail);
+  NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &treeGraph, 0, &highestTransportType, &needsProxy), ret, fail);
+  mscclHighestTransportType = std::max(mscclHighestTransportType, highestTransportType);
+  mscclNeedsProxy |= needsProxy;
   INFO(NCCL_INIT, "Connected all trees");
 
   // Check if we can setup CollNet
@@ -1049,7 +1055,13 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, ncclUniqueId* comm
   // Call devCommSetup before the last barrier, making sure we don't have a thread running in front and starting to
   // launch NCCL kernels before all cuda mem allocation is complete. That could cause a deadlock.
   NCCLCHECKGOTO(devCommSetup(comm), ret, fail);
-
+  if (mscclEnabled()) {
+    NCCLCHECK(mscclInit(comm));
+    mscclStatus& status = mscclGetStatus();
+    status.needsFence |= mscclHighestTransportType > TRANSPORT_P2P;
+    status.needsProxy |= mscclNeedsProxy;
+  }
+  
   /* Local intra-node barrier */
   NCCLCHECKGOTO(bootstrapBarrier(comm->bootstrap, comm->localRankToRank, comm->localRank, comm->localRanks, comm->localRankToRank[0]), ret, fail);
 

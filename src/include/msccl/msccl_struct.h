@@ -224,6 +224,8 @@ struct mscclStatus {
   std::vector<std::map<int, mscclAlgoHandle_t>> rankToAlgoHandles;
   bool graphEnabled;
   bool graphFirstKernel;
+  bool needsFence;
+  bool needsProxy;
 };
 
 struct alignas(16) mscclWork {
@@ -238,6 +240,7 @@ struct alignas(16) mscclWork {
   uint32_t maxAllowedCount;
   bool hasReduce;
   bool redOpArgIsPtr;
+  bool needsFence;
 };
 
 struct mscclShmemData {
