@@ -254,7 +254,11 @@ for lib in ${NCCL_LIB[@]}; do
                 echo $msccl_algo_gen
                 eval $msccl_algo_gen
                 wait
-                sed -i '1s/>/ outofplace="0" minBytes="0" maxBytes="327680">/' $MSCCL_ALGO_PATH/$algo_file
+                if [ $NUM_GPUS = "16" ]; then
+                    sed -i '1s/>/ outofplace="0" minBytes="0" maxBytes="65565">/' $MSCCL_ALGO_PATH/$algo_file
+                else
+                    sed -i '1s/>/ outofplace="0" minBytes="0" maxBytes="327680">/' $MSCCL_ALGO_PATH/$algo_file
+                fi
             fi
             echo "Copying the algo file $MSCCL_ALGO_PATH/$algo_file to $MSCCL_ALGO_TEST_PATH/test.xml"
             cp $MSCCL_ALGO_PATH/$algo_file $MSCCL_ALGO_TEST_PATH/test.xml
