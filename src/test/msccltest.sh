@@ -139,6 +139,9 @@ if [ $NUM_GPUS = "4" ]; then
   MSCCL_DATA_TYPE=("${MSCCL_DATA_TYPE[@]/fp8_e5m2}")
 elif [ $NUM_GPUS = "16" ]; then
   ONE_PROCESS=(0)
+  if [ $TEST_TYPE = "fun" ]; then 
+    MSCCL_ALGOS=(allreduce_a100_multinode_allpairs)
+  fi
 fi
 
 # Special case for msccl version 217
@@ -245,6 +248,8 @@ for lib in ${NCCL_LIB[@]}; do
                 msccl_algo_gen="python $MSCCL_TOOL/$algo.py --protocol=$proto $NUM_GPUS 2 > $MSCCL_ALGO_PATH/$algo_file"
                 if [ $algo = "allreduce_a100_ring" ]; then
                     msccl_algo_gen="python $MSCCL_TOOL/$algo.py --protocol=$proto $NUM_GPUS 1 2 > $MSCCL_ALGO_PATH/$algo_file"
+                elif [ $algo = "allreduce_a100_multinode_allpairs" ]; then
+                    msccl_algo_gen="python $MSCCL_TOOL/$algo.py --protocol=$proto $(($NUM_GPUS/2)) 2 > $MSCCL_ALGO_PATH/$algo_file"
                 fi
                 echo $msccl_algo_gen
                 eval $msccl_algo_gen
