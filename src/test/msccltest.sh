@@ -137,6 +137,8 @@ if [ $NUM_GPUS = "4" ]; then
   NCCL_SHM=(0)
   MSCCL_DATA_TYPE=("${MSCCL_DATA_TYPE[@]/fp8_e4m3}")
   MSCCL_DATA_TYPE=("${MSCCL_DATA_TYPE[@]/fp8_e5m2}")
+elif [ $NUM_GPUS = "16" ]; then
+  ONE_PROCESS=(0)
 fi
 
 # Special case for msccl version 217
@@ -273,7 +275,7 @@ for lib in ${NCCL_LIB[@]}; do
                                     if [ $ENABLE_ONE_PROCESS -eq 1 ]; then
                                        msccl_test="mpirun --allow-run-as-root -np 1 -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES_PARAM -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE -x NCCL_NET_PLUGIN=none -x NCCL_IB_DISABLE=0 $TOPO_FILE_PARAM $GRAPH_FILE_PARAM $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b $DATA_SIZE_MIN -e $DATA_SIZE_MAX -d $DATA_TYPE -f 2 -g $NUM_GPUS -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     elif [ $NUM_GPUS -eq 16 ]; then
-                                       msccl_test="mpirun --allow-run-as-root --tag-output -map-by ppr:8:node -hostfile $MSCCL_HOME/src/test/$MS_SKU/hostfile --bind-to numa -mca pml ob1 -mca btl ^openib -mca btl_tcp_if_include eth0 -x PATH -x LD_PRELOAD=$MSCCL_PATH/lib/libnccl.so:$LD_PRELOAD -x NCCL_IB_PCI_RELAXED_ORDERING=1 -x NCCL_SOCKET_IFNAME=eth0 -x CUDA_DEVICE_ORDER=PCI_BUS_ID -x NCCL_NET_GDR_LEVEL=5 -x NCCL_TOPO_FILE=$MSCCL_HOME/src/test/$MS_SKU/$MS_SKU-topo.xml -x NCCL_NET_PLUGIN=none -x NCCL_IB_DISABLE=0 -x NCCL_MIN_NCHANNELS=32 -x NCCL_DEBUG=WARN -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b $DATA_SIZE_MIN -e $DATA_SIZE_MAX -d $DATA_TYPE -f 2 -g 1 -c 1 -w $WARM_UP_COUNT -n $ITERATION_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
+                                       msccl_test="mpirun --allow-run-as-root --tag-output -map-by ppr:8:node -hostfile $MSCCL_HOME/src/test/$MS_SKU/hostfile --bind-to numa -mca pml ob1 -mca btl ^openib -mca btl_tcp_if_include eth0 -x PATH -x LD_PRELOAD=$MSCCL_PATH/lib/libnccl.so:$LD_PRELOAD -x NCCL_IB_PCI_RELAXED_ORDERING=1 -x NCCL_SOCKET_IFNAME=eth0 -x CUDA_DEVICE_ORDER=PCI_BUS_ID -x NCCL_NET_GDR_LEVEL=5 $TOPO_FILE_PARAM -x NCCL_NET_PLUGIN=none -x NCCL_IB_DISABLE=0 -x NCCL_MIN_NCHANNELS=32 -x NCCL_DEBUG=WARN -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b $DATA_SIZE_MIN -e $DATA_SIZE_MAX -d $DATA_TYPE -f 2 -g 1 -c 1 -w $WARM_UP_COUNT -n $ITERATION_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     else
                                        msccl_test="mpirun --allow-run-as-root -np $NUM_GPUS -x LD_LIBRARY_PATH=$MSCCL_PATH/lib/:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_ALGO=$NCCL_ALGO $MSCCL_XML_FILES_PARAM -x NCCL_P2P_DISABLE=$NCCL_P2P_DISABLE -x NCCL_SHM_DISABLE=$NCCL_SHM_DISABLE -x NCCL_NET_PLUGIN=none -x NCCL_IB_DISABLE=0 $TOPO_FILE_PARAM $GRAPH_FILE_PARAM $NCCL_TESTS_PATH/build/$NCCL_TEST_TYPE -b $DATA_SIZE_MIN -e $DATA_SIZE_MAX -d $DATA_TYPE -f 2 -g 1 -c 1 -o $OP_TYPE -n $ITERATION_COUNT -w $WARM_UP_COUNT -G $ENABLE_CUDA_GRAPH -z 0"
                                     fi
