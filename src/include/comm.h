@@ -345,7 +345,6 @@ struct ncclComm {
   bool finalizeCalled;
   // shared structures for finalization
   int finalizeRankCnt;
-
   // Whether this comm is compatible with MSCCL
   bool mscclCompatible;
 };

@@ -30,7 +30,6 @@ ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, n
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
       count, datatype, root, 0, ncclSum, mscclFuncBroadcast, comm, stream);
   }
-
   struct ncclInfo info = { ncclFuncBroadcast, "Broadcast",
     sendbuff, recvbuff, count, datatype, ncclSum, root, comm, stream, /* Args */
     BROADCAST_CHUNKSTEPS, BROADCAST_SLICESTEPS };

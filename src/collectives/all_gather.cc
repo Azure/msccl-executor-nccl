@@ -21,7 +21,7 @@ ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t sendcoun
   size_t msgsize = sendcount * ncclTypeSize(datatype);
   NVTX3_FUNC_WITH_PARAMS(AllGather, AllGatherSchema, msgsize)
 
-   if (mscclAvailable() && !mscclIsCaller()) {
+  if (mscclAvailable() && !mscclIsCaller()) {
     return mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
       sendcount, datatype, 0, 0, ncclSum, mscclFuncAllGather, comm, stream);

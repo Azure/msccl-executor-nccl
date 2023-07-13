@@ -71,8 +71,8 @@ ncclResult_t mscclSetupScratch(struct mscclAlgo* hostAlgo, cudaStream_t stream) 
 
 ncclResult_t mscclSetupSyncFlags(cudaStream_t stream) {
   mscclStatus& status = mscclGetStatus();
-  // if (mscclGetThreadLocalStatus().captureStatus == mscclNewCapture ||
-  if ((status.graphEnabled && status.graphFirstKernel) ||
+  mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
+  if (threadLocalStatus.captureStatus == mscclNewCapture ||
       status.workIndex > (1ULL << (8*sizeof(status.workIndex))) - 2 * NCCL_MAX_OPS - 1) {
     CUDACHECK(cudaMemsetAsync(status.syncFlags, 0, sizeof(struct mscclFlag) * MSCCL_MAX_NUM_THREAD_BLOCKS, stream));
     status.workIndex = 1; // setting the workIndex back to 1 for next iterations
@@ -82,6 +82,8 @@ ncclResult_t mscclSetupSyncFlags(cudaStream_t stream) {
 }
 
 ncclResult_t mscclSetupConnections(struct mscclAlgo* hostAlgo, ncclComm_t comm) {
+  mscclStatus& status = mscclGetStatus();
+
   // Check whether there is enough channels
   if (hostAlgo->nChannels > comm->nChannels) {
     WARN("MSCCL: number of channels available (%d) less than required (%d)", comm->nChannels, hostAlgo->nChannels);
@@ -107,85 +109,19 @@ ncclResult_t mscclSetupConnections(struct mscclAlgo* hostAlgo, ncclComm_t comm) 
 
   // Connect MSCCL connections
   mscclSetIsCallerFlag();
-  NCCLCHECK(ncclTransportP2pSetup(comm, NULL, 0));
+  int highestTransportType = TRANSPORT_P2P;
+  bool needsProxy = false;
+  NCCLCHECK(ncclTransportP2pSetup(comm, NULL, 0, &highestTransportType, &needsProxy));
+  status.needsFence |= highestTransportType > TRANSPORT_P2P;
+  status.needsProxy |= needsProxy;
   mscclClearIsCallerFlag();
 
   return ncclSuccess;
 }
 
-// static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t comm, bool* justInquire) {
-//   mscclStatus& status = mscclGetStatus();
-//   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
-//   struct ncclProxyOp proxyOp = {};
-//   mscclSavedCudaHostNodeParams savedCudaHostNodeParams;
-
-//   // proxyOp.connIndex = 0;
-//   proxyOp.sliceSteps = status.sliceSteps;
-//   proxyOp.chunkSteps = status.chunkSteps;
-//   proxyOp.chunkSize = status.chunkSize;
-//   proxyOp.protocol = hostAlgo->protocol;
-//   proxyOp.dtype = status.dataType;
-//   proxyOp.redOp = 0;
-//   proxyOp.pattern = 0;
-//   proxyOp.root = 0;
-//   proxyOp.nbytes = status.stepSize*proxyOp.sliceSteps;
-//   proxyOp.opCount = comm->collOpCount;
-//   int nLoops = (int)(DIVUP(status.nBytes, (size_t)((size_t)hostAlgo->nChunksPerLoop*(size_t)status.chunkEffectiveSize)));
-//   int nLoopsChunkSteps = nLoops * status.chunkSteps;
-//   for (int ch = 0; ch < hostAlgo->nChannels; ch++) {
-//     proxyOp.channelId = ch;
-//     struct mscclChannelInfo* mscclChannel = hostAlgo->mscclChannels + ch;
-//     struct ncclChannel* ncclChannel = comm->channels + ch;
-//     for (int i = 0; i < mscclChannel->nRecvPeers; i++){
-//       struct mscclChannelPeerInfo* recvPeer = mscclChannel->recvPeerInfo + i;
-//       int nRecvs = 0;
-//       for (int j = 0; j < recvPeer->nExistingCounts; j++){
-//         int c = recvPeer->existingCounts[j];
-//         int nStepsInCount = DIVUP(c+1, status.maxAllowedCount);
-//         nRecvs += recvPeer->nTransmissionsOfCount[c] * nStepsInCount;
-//       }
-//       proxyOp.nsteps = nLoopsChunkSteps * nRecvs;
-//       if (proxyOp.nsteps > 0) {
-//         if (justInquire) {
-//           savedCudaHostNodeParams[comm].emplace_back(ncclChannel, proxyRecv, recvPeer->peer, &proxyOp, 0);
-//         }
-//         else{
-//           NCCLCHECK(mscclSaveProxy(ncclChannel, proxyRecv, recvPeer->peer, &proxyOp, 0, justInquire));
-//         }
-//       }
-//     }
-//     for (int i=0; i<mscclChannel->nSendPeers; i++){
-//       struct mscclChannelPeerInfo* sendPeer = &mscclChannel->sendPeerInfo[i];
-//       int nSends = 0;
-//       for (int j = 0; j < sendPeer->nExistingCounts; j++){
-//         int c = sendPeer->existingCounts[j];
-//         int nStepsInCount = DIVUP(c+1, status.maxAllowedCount);
-//         nSends += sendPeer->nTransmissionsOfCount[c] * nStepsInCount;
-//       }
-//       proxyOp.nsteps = nLoopsChunkSteps * nSends;
-//       if (proxyOp.nsteps > 0) {
-//         if (justInquire) {
-//           savedCudaHostNodeParams[comm].emplace_back(ncclChannel, proxySend, sendPeer->peer, &proxyOp, 0);
-//         }
-//         else{
-//           NCCLCHECK(SaveProxy(ncclChannel, proxySend, sendPeer->peer, &proxyOp, 0, justInquire));
-//         }
-//       }
-//     }
-//   }
-//   if (justInquire) {
-//     *justInquire=true;
-//     INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxyImpl: comm: %p proxy args size: %ld\n", comm, savedCudaHostNodeParams[comm].size());
-//     mscclGetSavedProxyArgs()[threadLocalStatus.captureId].emplace_back(savedCudaHostNodeParams);
-//     return ncclSuccess;
-//   }
-//   NCCLCHECK(ncclProxyStart(comm));
-//   comm->collOpCount++;
-//   return ncclSuccess;
-// }
-
 static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t comm, bool* justInquire) {
   mscclStatus& status = mscclGetStatus();
+  mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   struct ncclProxyOp proxyOp = {};
 
   // proxyOp.connIndex = 0;
@@ -246,46 +182,26 @@ static void CUDART_CB mscclSetupProxyCallback(void *args) {
   }    
 }
 
-// static void CUDART_CB mscclSetupProxyCallback(void *args) {
-//   std::vector<mscclSavedCudaHostNodeParams>* params = (std::vector<mscclSavedCudaHostNodeParams>*)args;
-//   INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxyCallback: proxy args size: %ld\n", params->size());
-//   for (auto &p : *params) {
-//     INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxyCallback1: comm: %p, proxy args size: %ld\n", p.begin()->first, p.size());
-//     for (auto &q : p) {
-//       INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxyCallback2: comm: %p, proxy args size: %ld\n", q.first, q.second.size());
-//       for (auto &r : q.second) {
-//         INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxyCallback: comm: %p, channel: %p, opType: %d, peer: %d, proxyOp: %p, connIndex: %d\n", q.first, r.channel, r.opType, r.peer, r.proxyOp, r.connIndex);
-//         mscclSaveProxy(r.channel, r.opType, r.peer, r.proxyOp, r.connIndex, nullptr);    
-//       }
-//       INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxyCallback: start the proxy: comm: %p \n", q.first);
-//       ncclProxyStart(q.first);
-//       q.first->collOpCount++;
-//     }
-//   }
-// }
-
 ncclResult_t mscclSetupProxy(struct mscclAlgo* hostAlgo, ncclComm_t comm, cudaStream_t stream) {
+  mscclStatus& status = mscclGetStatus();
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   mscclSavedProxyArgs& savedProxyArgs = mscclGetSavedProxyArgs();
   if (threadLocalStatus.captureStatus == mscclNoCapture) {
     INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxy: no capture\n");
     NCCLCHECK(mscclSetupProxyImpl(hostAlgo, comm, nullptr));
-  } else {
+  } else if (status.needsProxy) {
     INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxy: capture\n");
     if (savedProxyArgs[threadLocalStatus.captureId].size() == 0) {
       INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxy: adding callback\n");
 
       cudaGraphNode_t callbackNode;
       cudaHostNodeParams p;
-      // p.fn = mscclSetupProxyCallback1;
-      // auto params = new mscclCudaHostNodeParams(comm, threadLocalStatus.captureId);
       p.fn = mscclSetupProxyCallback;
       auto params = &savedProxyArgs[threadLocalStatus.captureId];
       p.userData = params;
       CUDACHECK(cudaGraphAddHostNode(&callbackNode, threadLocalStatus.graph, nullptr, 0, &p));
     }
-    // bool justInquire = false;
-    // NCCLCHECK(mscclSetupProxyImpl(hostAlgo, comm, &justInquire));
+    bool justInquire = false;
     mscclGetSavedProxyArgs()[threadLocalStatus.captureId].emplace_back(hostAlgo, comm);
   }
   return ncclSuccess;
@@ -548,7 +464,8 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   work.maxAllowedCount = status.maxAllowedCount;
   work.hasReduce = hostAlgo->hasReduce;
   work.redOpArgIsPtr = opFull.scalarArgIsPtr;
-  INFO(NCCL_INIT|NCCL_NET, "MSCCL: Setup Kernel finished, smem %ld", smem);
+  work.needsFence = status.needsFence;
+  INFO(NCCL_INIT, "MSCCL: Setup Kernel finished, smem %ld needsFence %d", smem, status.needsFence);
   void *args[3] = {&comm->devComm, &devAlgo, &work};
   void *func = mscclKernelEntries[(opFull.op * ncclNumTypes + dataType) * NCCL_NUM_PROTOCOLS + hostAlgo->protocol];
 

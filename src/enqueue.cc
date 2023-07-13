@@ -63,7 +63,7 @@ struct ncclKernelMatch {
   MACRO_IF(HAVE_BFLOAT16, \
     SINGLE_ARG(, NCCL_FUNC4(func, devredop, MACRO_IF(reduction, __nv_bfloat16, int8_t), specialized)), \
     /*nothing*/ \
-   ) \
+  ) \
   MACRO_IF(HAVE_FP8, \
     SINGLE_ARG(, NCCL_FUNC4(func, devredop, MACRO_IF(reduction, __nv_fp8_e4m3, int8_t), specialized)), \
     /*nothing*/ \

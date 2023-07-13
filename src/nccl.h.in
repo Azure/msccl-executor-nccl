@@ -396,7 +396,6 @@ ncclResult_t  ncclAllToAll(const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
 ncclResult_t pncclAllToAll(const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
-
 /*! @brief Opaque handle to MSCCL algorithm */
 typedef int mscclAlgoHandle_t;
 
