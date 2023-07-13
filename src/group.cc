@@ -93,6 +93,14 @@ ncclResult_t ncclGroupStart() {
 }
 
 ncclResult_t ncclGroupStartInternal() {
+  /* if previous group launch does not complete, don't launch this one. */
+  if (ncclGroupJobMainPtr != NULL) {
+    if (__atomic_load_n(&ncclGroupJobMainPtr->doneFlag, __ATOMIC_ACQUIRE) == false) {
+      return ncclInvalidUsage;
+    } else {
+      NCCLCHECK(groupJobComplete(ncclGroupJobMainPtr));
+    }
+  }
   ncclGroupDepth++;
   if (mscclAvailable() && !mscclIsCaller()) {
     NCCLCHECK(mscclGroupStart());

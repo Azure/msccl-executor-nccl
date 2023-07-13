@@ -87,19 +87,6 @@ static inline ncclResult_t groupJobComplete(struct ncclGroupJob* job) {
   return ret;
 }
 
-inline ncclResult_t ncclGroupStartInternal() {
-  /* if previous group launch does not complete, don't launch this one. */
-  if (ncclGroupJobMainPtr != NULL) {
-    if (__atomic_load_n(&ncclGroupJobMainPtr->doneFlag, __ATOMIC_ACQUIRE) == false) {
-      return ncclInvalidUsage;
-    } else {
-      NCCLCHECK(groupJobComplete(ncclGroupJobMainPtr));
-    }
-  }
-  ncclGroupDepth++;
-  return ncclSuccess;
-}
-
 inline ncclResult_t ncclGroupErrCheck(ncclResult_t ret) {
   if (ncclGroupDepth > 0) {
     if (ret != ncclSuccess && ret != ncclInProgress) ncclGroupError = ret;
