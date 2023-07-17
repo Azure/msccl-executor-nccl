@@ -31,6 +31,7 @@ INCDIR := $(BUILDDIR)/include
 LIBDIR := $(BUILDDIR)/lib
 OBJDIR := $(BUILDDIR)/obj
 PKGDIR := $(BUILDDIR)/lib/pkgconfig
+MSCCLALGORITHMDIR := $(LIBDIR)/msccl-algorithms
 ##### target files
 CUDARTLIB  ?= cudart_static
 
@@ -51,11 +52,13 @@ LDFLAGS    += -L${CUDA_LIB} -l$(CUDARTLIB) -lpthread -lrt -ldl
 DEVICELIB  := $(BUILDDIR)/obj/collectives/device/colldevice.a
 
 ##### rules
-build : lib staticlib
+build : lib staticlib msccl-algorithms
 
 lib : $(INCTARGETS) $(LIBDIR)/$(LIBTARGET) $(PKGDIR)/$(PKGTARGET)
 
 staticlib : $(LIBDIR)/$(STATICLIBTARGET)
+
+msccl-algorithms : $(MSCCLALGORITHMDIR)
 
 $(DEVICELIB): ALWAYS_REBUILD $(INCTARGETS)
 	$(MAKE) -C collectives/device
@@ -128,6 +131,9 @@ $(OBJDIR)/%.o : %.cc $(INCTARGETS)
                 sed -e 's/^ *//' -e 's/$$/:/' >> $(@:%.o=%.d)
 	@rm -f $(@:%.o=%.d.tmp)
 
+$(MSCCLALGORITHMDIR):
+	mkdir -p $(MSCCLALGORITHMDIR)
+	
 clean :
 	$(MAKE) -C collectives/device clean
 	rm -rf ${INCDIR} ${LIBDIR} ${PKGDIR} ${OBJDIR}
