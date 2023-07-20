@@ -139,6 +139,7 @@ clean :
 install : build
 	mkdir -p $(PREFIX)/lib
 	mkdir -p $(PREFIX)/lib/pkgconfig
+	mkdir -p $(PREFIX)/lib/msccl-algorithms
 	mkdir -p $(PREFIX)/include
 	cp -P -v $(BUILDDIR)/lib/lib* $(PREFIX)/lib/
 	cp -P -v $(BUILDDIR)/lib/pkgconfig/* $(PREFIX)/lib/pkgconfig/
