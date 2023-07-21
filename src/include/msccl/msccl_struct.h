@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <vector>
+#include <string>
 #include "devcomm.h"
 #include "msccl/msccl_scheduler.h"
 
