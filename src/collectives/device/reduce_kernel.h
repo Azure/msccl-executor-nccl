@@ -521,7 +521,11 @@ struct Apply_PreOp<FuncPreMulSum<half>, /*EltPerPack=*/1> {
     __device__ static BytePack<sizeof(__nv_fp8_e4m3)> preOp(
         FuncPreMulSum<__nv_fp8_e4m3> fn, BytePack<sizeof(__nv_fp8_e4m3)> a
       ) {
-      return toPack<__nv_fp8_e4m3>(__nv_fp8_e4m3(__hmul(__half(fromPack<__nv_fp8_e4m3>(a)), __half(fn.scalar))));
+      #if __CUDA_ARCH__ >= 800
+        return toPack<__nv_fp8_e4m3>(__nv_fp8_e4m3(__hmul(__half(fromPack<__nv_fp8_e4m3>(a)), __half(fn.scalar))));
+      #else
+        return toPack<__nv_fp8_e4m3>(__nv_fp8_e4m3(float(fromPack<__nv_fp8_e4m3>(a)) * float(fn.scalar)));
+      #endif
     }
   };
   
@@ -545,7 +549,11 @@ struct Apply_PreOp<FuncPreMulSum<half>, /*EltPerPack=*/1> {
     __device__ static BytePack<sizeof(__nv_fp8_e5m2)> preOp(
         FuncPreMulSum<__nv_fp8_e5m2> fn, BytePack<sizeof(__nv_fp8_e5m2)> a
       ) {
-      return toPack<__nv_fp8_e5m2>(__nv_fp8_e5m2(__hmul(__half(fromPack<__nv_fp8_e5m2>(a)), __half(fn.scalar))));
+      #if __CUDA_ARCH__ >= 800
+        return toPack<__nv_fp8_e5m2>(__nv_fp8_e5m2(__hmul(__half(fromPack<__nv_fp8_e5m2>(a)), __half(fn.scalar))));
+      #else
+        return toPack<__nv_fp8_e5m2>(__nv_fp8_e5m2(float(fromPack<__nv_fp8_e5m2>(a)) * float(fn.scalar)));
+      #endif
     }
   };
   
