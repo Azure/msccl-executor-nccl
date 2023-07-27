@@ -108,13 +108,14 @@ class Primitives<
   }
 
   inline __device__ uint64_t loadStepValue(uint64_t* ptr) {
-    #if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010
-    if (flags & NvlsMinPolling) {
-      uint64_t ans;
-      asm("multimem.ld_reduce.acquire.sys.global.min.u64 %0, [%1];" : "=l"(ans) : "l"(cvta_to_global(ptr)));
-      return ans;
-    }
-    #endif
+    // #if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010
+    // if (flags & NvlsMinPolling) {
+    //   uint64_t ans;
+    //   asm("multimem.ld_reduce.acquire.sys.global.min.u64 %0, [%1];" : "=l"(ans) : "l"(cvta_to_global(ptr)));
+    //   asm("ld.volatile.global.u64 %0, [%1];" : "=l"(ans) : "l"(cvta_to_global(ptr)) : "memory");
+    //   return ans;
+    // }
+    // #endif
     // volatile is faster than acquire but not as correct. Make sure reduceCopy
     // loads data using volatile so it doesn't see stale data in L1.
     return ld_volatile_global(ptr);

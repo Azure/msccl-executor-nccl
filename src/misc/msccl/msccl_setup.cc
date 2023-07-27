@@ -23,7 +23,6 @@ ncclResult_t mscclGetCaptureStatus(cudaStream_t stream) {
     if (savedProxyArgs.count(captureId) == 0) {
       threadLocalStatus.captureStatus = mscclNewCapture;
       savedProxyArgs[captureId] = std::vector<struct mscclProxyArg>();
-      // savedProxyArgs[captureId] = std::vector<mscclSavedCudaHostNodeParams>();
     } else {
       INFO(NCCL_INIT|NCCL_NET,"mscclGetCaptureStatus: captureId %llu is same with the previous one\n", captureId);
       threadLocalStatus.captureStatus = mscclExistingCapture;
@@ -146,7 +145,7 @@ static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t c
       int nRecvs = 0;
       for (int j = 0; j < recvPeer->nExistingCounts; j++){
         int c = recvPeer->existingCounts[j];
-        int nStepsInCount = DIVUP(c+1, status.maxAllowedCount);
+        int nStepsInCount = DIVUP(c, status.maxAllowedCount);
         nRecvs += recvPeer->nTransmissionsOfCount[c] * nStepsInCount;
       }
       proxyOp.nsteps = nLoopsChunkSteps * nRecvs;
@@ -159,7 +158,7 @@ static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t c
       int nSends = 0;
       for (int j = 0; j < sendPeer->nExistingCounts; j++){
         int c = sendPeer->existingCounts[j];
-        int nStepsInCount = DIVUP(c+1, status.maxAllowedCount);
+        int nStepsInCount = DIVUP(c, status.maxAllowedCount);
         nSends += sendPeer->nTransmissionsOfCount[c] * nStepsInCount;
       }
       proxyOp.nsteps = nLoopsChunkSteps * nSends;

@@ -20,6 +20,8 @@ STATICLIB  := $(OBJDIR)/colldevice.a
 DEVOBJ     := $(OBJDIR)/devlink.o
 RULESFILE  := $(OBJDIR)/Makefile.rules
 
+# NVCUFLAGS += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl -g -G -src-in-ptx --compiler-options "-fPIC"
+# NVCUFLAGS += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl -g -G -src-in-ptx --compiler-options "-fPIC -fvisibility=hidden"
 NVCUFLAGS += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl --compiler-options "-fPIC -fvisibility=hidden"
 
 
