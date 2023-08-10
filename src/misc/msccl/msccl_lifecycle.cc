@@ -316,9 +316,7 @@ static ncclResult_t mscclSaveCountsAndDispls(struct mscclSavedSchedulerParam* pa
 }
 
 static ncclResult_t mscclRunSavedParams() {
-  mscclStatus& status = mscclGetStatus();
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
-  struct ncclCudaGraph graph;
 
   for (size_t i = 0; i < threadLocalStatus.savedSchedulerParams.size(); i++) {
     auto& param = threadLocalStatus.savedSchedulerParams[i];
