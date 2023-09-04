@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2017-2022, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -50,11 +51,12 @@ struct ncclDevRedOpFull {
   MACRO_IF(undef, /*undefined*/, DECL5(func, algo, LL128,  devredop, type))
 
 #define DECL3(func, devredop, type, undef) \
-  DECL4(func, RING,    devredop, type, undef) \
-  DECL4(func, TREE,    devredop, type, undef) \
+  DECL4(func, RING,           devredop, type, undef) \
+  DECL4(func, TREE,           devredop, type, undef) \
   DECL4(func, COLLNET_DIRECT, devredop, type, undef) \
-  DECL4(func, COLLNET_CHAIN, devredop, type, undef) \
-  DECL4(func, NVLS,    devredop, type, undef)
+  DECL4(func, COLLNET_CHAIN,  devredop, type, undef) \
+  DECL4(func, NVLS,           devredop, type, undef) \
+  DECL4(func, NVLS_TREE,      devredop, type, undef)
 
 #if defined(__CUDA_BF16_TYPES_EXIST__) && defined(__CUDA_FP8_TYPES_EXIST__)
 #define DECL2(func, devredop, undefForFloat) \

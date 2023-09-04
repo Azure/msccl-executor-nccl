@@ -27,7 +27,7 @@ ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recv
   NvtxParamsReduceScatter payload{recvcount * ncclTypeSize(datatype), op};
   NVTX3_FUNC_WITH_PARAMS(ReduceScatter, ReduceScatterSchema, payload)
 
-   if (mscclAvailable() && !mscclIsCaller()) {
+  if (mscclAvailable() && !mscclIsCaller()) {
     return mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
       recvcount, datatype, 0, 0, op, mscclFuncReduceScatter, comm, stream);

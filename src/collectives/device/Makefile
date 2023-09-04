@@ -1,5 +1,6 @@
 #
 # Copyright (c) 2015-2021, NVIDIA CORPORATION. All rights reserved.
+# Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
 #
 # See LICENSE.txt for license information
 #
@@ -11,7 +12,6 @@ BUILDDIR ?= $(abspath ../../../build)
 OBJDIR := $(BUILDDIR)/obj/collectives/device
 
 LIBSRCFILES := all_reduce.cu broadcast.cu reduce.cu all_gather.cu reduce_scatter.cu sendrecv.cu onerank_reduce.cu
-# msccl_kernel.cu
 LIBSRCFILES += functions.cu
 
 DEPFILES   := $(patsubst %.cu, $(OBJDIR)/%.d, $(LIBSRCFILES))
@@ -20,11 +20,9 @@ STATICLIB  := $(OBJDIR)/colldevice.a
 DEVOBJ     := $(OBJDIR)/devlink.o
 RULESFILE  := $(OBJDIR)/Makefile.rules
 
-NVCUFLAGS  += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl --compiler-options "-fPIC -fvisibility=hidden"
-#below flags are used for debug purpose
-#NVCUFLAGS  += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl -g -G -src-in-ptx --compiler-options "-fPIC"
-#NVCUFLAGS  += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl -g -G -lineinfo -src-in-ptx --compiler-options "-fPIC"
-#
+# NVCUFLAGS += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl -g -G -src-in-ptx --compiler-options "-fPIC"
+# NVCUFLAGS += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl -g -G -src-in-ptx --compiler-options "-fPIC -fvisibility=hidden"
+NVCUFLAGS += -I. -I.. -I$(BUILDDIR)/include -I../../include -I../../include/msccl --compiler-options "-fPIC -fvisibility=hidden"
 
 
 all: $(STATICLIB)
@@ -40,7 +38,7 @@ $(RULESFILE) : gen_rules.sh
 
 -include $(RULESFILE)
 
-LIBOBJ     := $(GENOBJS) $(OBJDIR)/functions.o $(OBJDIR)/onerank_reduce.o $(OBJDIR)/msccl_kernel.o   
+LIBOBJ := $(GENOBJS) $(OBJDIR)/functions.o $(OBJDIR)/onerank_reduce.o $(OBJDIR)/msccl_kernel.o
 
 -include $(DEPFILES)
 

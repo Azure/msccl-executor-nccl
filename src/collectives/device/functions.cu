@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2015-2021, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -23,7 +24,8 @@ __shared__ ncclShmemData ncclShmem;
   NCCL_FUNC5(func, RING,    devredop, type, nullify), \
   NCCL_FUNC5(func, COLLNET_DIRECT, devredop, type, nullify), \
   NCCL_FUNC5(func, COLLNET_CHAIN,  devredop, type, nullify), \
-  NCCL_FUNC5(func, NVLS,           devredop, type, nullify)
+  NCCL_FUNC5(func, NVLS,           devredop, type, nullify), \
+  NCCL_FUNC5(func, NVLS_TREE,      devredop, type, nullify)
 
 #if defined(__CUDA_BF16_TYPES_EXIST__) && defined(__CUDA_FP8_TYPES_EXIST__)
 // Must be consistent with ncclDataType_t

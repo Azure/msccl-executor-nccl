@@ -23,7 +23,6 @@ ncclResult_t mscclGetCaptureStatus(cudaStream_t stream) {
     if (savedProxyArgs.count(captureId) == 0) {
       threadLocalStatus.captureStatus = mscclNewCapture;
       savedProxyArgs[captureId] = std::vector<struct mscclProxyArg>();
-      // savedProxyArgs[captureId] = std::vector<mscclSavedCudaHostNodeParams>();
     } else {
       INFO(NCCL_INIT|NCCL_NET,"mscclGetCaptureStatus: captureId %llu is same with the previous one\n", captureId);
       threadLocalStatus.captureStatus = mscclExistingCapture;
@@ -134,7 +133,7 @@ static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t c
   proxyOp.pattern = 0;
   proxyOp.root = 0;
   proxyOp.nbytes = status.stepSize*proxyOp.sliceSteps;
-  proxyOp.opCount = comm->collOpCount;
+  proxyOp.opCount = comm->sharedRes->collOpCount;
   int nLoops = (int)(DIVUP(status.nBytes, (size_t)((size_t)hostAlgo->nChunksPerLoop*(size_t)status.chunkEffectiveSize)));
   int nLoopsChunkSteps = nLoops * status.chunkSteps;
   for (int ch = 0; ch < hostAlgo->nChannels; ch++) {
@@ -151,7 +150,7 @@ static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t c
       }
       proxyOp.nsteps = nLoopsChunkSteps * nRecvs;
       if (proxyOp.nsteps > 0) {
-        NCCLCHECK(mscclSaveProxy(ncclChannel, proxyRecv, recvPeer->peer, &proxyOp, 0, justInquire));
+        NCCLCHECK(mscclSaveProxy(comm, ncclChannel, proxyRecv, recvPeer->peer, &proxyOp, 0, justInquire));
       }
     }
     for (int i=0; i<mscclChannel->nSendPeers; i++){
@@ -164,12 +163,12 @@ static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t c
       }
       proxyOp.nsteps = nLoopsChunkSteps * nSends;
       if (proxyOp.nsteps > 0) {
-        NCCLCHECK(mscclSaveProxy(ncclChannel, proxySend, sendPeer->peer, &proxyOp, 0, justInquire));
+        NCCLCHECK(mscclSaveProxy(comm, ncclChannel, proxySend, sendPeer->peer, &proxyOp, 0, justInquire));
       }
     }
   }
   NCCLCHECK(ncclProxyStart(comm));
-  comm->collOpCount++;
+  comm->sharedRes->collOpCount++;
   return ncclSuccess;
 }
 
@@ -252,8 +251,8 @@ static ncclResult_t hostToDevRedOp(
       opFull->op = ncclDevPreMulSum;
       bf16 = (__nv_bfloat16)(float(1.0/comm->nRanks));
       break;
-    #endif
-     #if defined(__CUDA_FP8_TYPES_EXIST__)
+    #endif  
+    #if defined(__CUDA_FP8_TYPES_EXIST__)
     case ncclFp8E4M3:
       opFull->op = ncclDevPreMulSum;
       fp8_e4m3 = (__nv_fp8_e4m3)(float(1.0/comm->nRanks));
@@ -475,7 +474,7 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   NCCLCHECK(ncclCudaDriverVersion(&driverVersion));
   if (driverVersion >= 11080) {
     int compCap = comm->compCap;
-    unsigned int clusterSize = (compCap == 90) ? comm->cgaClusterSize : 0;
+    unsigned int clusterSize = (compCap == 90) ? comm->config.cgaClusterSize : 0;
 
     cudaLaunchConfig_t launchConfig = {0};
     cudaLaunchAttribute launchAttrs[3];

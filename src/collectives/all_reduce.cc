@@ -26,7 +26,7 @@ ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count,
   };
   NvtxParamsAllReduce payload{count * ncclTypeSize(datatype), op};
   NVTX3_FUNC_WITH_PARAMS(AllReduce, AllReduceSchema, payload)
-
+  
   if (mscclAvailable() && !mscclIsCaller()) {
     return mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
