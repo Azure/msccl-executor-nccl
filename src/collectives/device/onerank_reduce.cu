@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -37,7 +38,7 @@ namespace {
       dst += i0;
       void *vsrc = (void*)src;
       void *vdst = (void*)dst;
-      ReduceOrCopyMulti<COLL_UNROLL, RedOp, T, 1, 1, 1, 1, /*PreOpSrcs=*/1>
+      reduceCopy<COLL_UNROLL, RedOp, T, 0,1,1, 0,1,1, /*PreOpSrcs=*/1>
         (tid, tn, we->redOpArg, &(we->redOpArg), true, 1, &vsrc, 1, &vdst, i1-i0);
     }
   }

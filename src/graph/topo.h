@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -12,12 +13,13 @@
 
 #define LOC_BW 5000.0
 #define SM60_NVLINK_BW 18.0
-#define SM70_NVLINK_BW 22.0
-#define SM80_NVLINK_BW 22.0
+#define SM70_NVLINK_BW 20.0
+#define SM80_NVLINK_BW 20.0
+#define SM90_NVLINK_BW 20.0
 #define SM86_NVLINK_BW 12.0
 #define PCI_BW 12.0           // PCI Gen3 x16
 #define QPI_BW 6.0
-#define SKL_QPI_BW 9.0
+#define SKL_QPI_BW 10.0
 #define ZPI_BW 6.0
 #define YONGFENG_ZPI_BW 9.0
 #define P9_BW 32.0
@@ -72,7 +74,12 @@ extern const char* topoLinkTypeStr[];
 
 // Connection traversing PCIe as well as the SMP interconnect between NUMA nodes (e.g., QPI/UPI)
 #define PATH_SYS 7
-#define PATH_DIS 7
+
+// Connection through the network
+#define PATH_NET 8
+
+// Disconnected
+#define PATH_DIS 9
 extern const char* topoPathTypeStr[];
 
 struct ncclTopoNode;
@@ -195,6 +202,7 @@ static ncclResult_t ncclTopoDevToRank(struct ncclTopoSystem* system, int dev, in
 // Returns NVLink bw in GB/s
 static float ncclTopoNVLinkBw(int cudaCompCap) {
   return
+    cudaCompCap >= 90 ? SM90_NVLINK_BW :
     cudaCompCap == 86 ? SM86_NVLINK_BW :
     cudaCompCap >= 80 ? SM80_NVLINK_BW :
     cudaCompCap >= 70 ? SM70_NVLINK_BW :

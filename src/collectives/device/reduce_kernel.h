@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2015-2021, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -55,9 +56,14 @@ struct Apply_PostOp/*{
   static BytePack<EltPerPack*sizeof(T)> postOp(Fn fn, BytePack<EltPerPack*sizeof(T)> a);
 }*/;
 template<typename Fn>
+struct LoadMultimem_BigPackSize/*{
+  // If non-zero, then this and sizeof(T) are valid pack sizes for LoadMultimem,
+  // otherwise there are no valid pack sizes for LoadMultimem.
+  static constexpr int BigPackSize = 0;
+}*/;
+template<typename Fn, int BytePerPack>
 struct Apply_LoadMultimem/*{
-  static constexpr int PackSize; // 0 if not implemented
-  static BytePack<PackSize> load(Fn fn, uintptr_t addr);
+  static BytePack<BytePerPack> load(Fn fn, uintptr_t addr);
 }*/;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -69,7 +75,7 @@ struct Apply_LoadMultimem/*{
 template<typename Fn, typename Pack>
 __device__ __forceinline__ Pack applyReduce(Fn fn, Pack a, Pack b) {
   return fromPack<Pack>(
-    Apply_Reduce<Fn, sizeof(Pack)/sizeof(typename Fn::EltType)>
+    Apply_Reduce<Fn, BytePackOf<Pack>::Size/sizeof(typename Fn::EltType)>
       ::reduce(fn, toPack(a), toPack(b))
   );
 }
@@ -77,7 +83,7 @@ __device__ __forceinline__ Pack applyReduce(Fn fn, Pack a, Pack b) {
 template<typename Fn, typename Pack>
 __device__ __forceinline__ Pack applyPreOp(Fn fn, Pack a) {
   return fromPack<Pack>(
-    Apply_PreOp<Fn, sizeof(Pack)/sizeof(typename Fn::EltType)>
+    Apply_PreOp<Fn, BytePackOf<Pack>::Size/sizeof(typename Fn::EltType)>
       ::preOp(fn, toPack(a))
   );
 }
@@ -85,18 +91,26 @@ __device__ __forceinline__ Pack applyPreOp(Fn fn, Pack a) {
 template<typename Fn, typename Pack>
 __device__ __forceinline__ Pack applyPostOp(Fn fn, Pack a) {
   return fromPack<Pack>(
-    Apply_PostOp<Fn, sizeof(Pack)/sizeof(typename Fn::EltType)>
+    Apply_PostOp<Fn, BytePackOf<Pack>::Size/sizeof(typename Fn::EltType)>
       ::postOp(fn, toPack(a))
   );
 }
 
-template<typename Fn>
-__device__ __forceinline__ BytePack<Apply_LoadMultimem<Fn>::PackSize> applyLoadMultimem(Fn fn, uintptr_t addr) {
-  return Apply_LoadMultimem<Fn>::load(fn, addr);
+template<typename Fn, int BytePerPack>
+__device__ __forceinline__ BytePack<BytePerPack> applyLoadMultimem(Fn fn, uintptr_t addr) {
+  return Apply_LoadMultimem<Fn, BytePerPack>::load(fn, addr);
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // Apply_Reduce
+
+// Nonsensical base case
+template<typename Fn>
+struct Apply_Reduce<Fn, /*EltPerPack=*/0> {
+  __device__ static BytePack<0> reduce(Fn fn, BytePack<0> a, BytePack<0> b) {
+    return  {};
+  }
+};
 
 // General recursive definition (EltPerPack > 1). This is how we iterate over
 // all elements in a pack of any size, by breaking it into halves. Eventually
@@ -312,6 +326,14 @@ struct Apply_PreOp<Fn, /*EltPerPack=*/1> {
     return a;
   }
 };
+// Base case definition (EltPerPack == 0), is nonsense!
+template<typename Fn>
+struct Apply_PreOp<Fn, /*EltPerPack=*/0> {
+  static constexpr bool IsIdentity = true;
+  __device__ static BytePack<0> preOp(Fn fn, BytePack<0> a) {
+    return {};
+  }
+};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Apply_PostOp
@@ -343,6 +365,14 @@ struct Apply_PostOp<Fn, /*EltPerPack=*/1> {
   template<int Size>
   __device__ static BytePack<Size> postOp(Fn fn, BytePack<Size> a) {
     return a;
+  }
+};
+// Base case definition (EltPerPack == 0), is nonsense!
+template<typename Fn>
+struct Apply_PostOp<Fn, /*EltPerPack=*/0> {
+  static constexpr bool IsIdentity = true;
+  __device__ static BytePack<0> postOp(Fn fn, BytePack<0> a) {
+    return {};
   }
 };
 
@@ -528,7 +558,7 @@ struct Apply_PreOp<FuncPreMulSum<half>, /*EltPerPack=*/1> {
       #endif
     }
   };
-  
+
   #if __CUDA_ARCH__ >= 800
     template<>
     struct Apply_PreOp<FuncPreMulSum<__nv_fp8_e4m3>, /*EltPerPack=*/2> {
@@ -556,7 +586,7 @@ struct Apply_PreOp<FuncPreMulSum<half>, /*EltPerPack=*/1> {
       #endif
     }
   };
-  
+
   #if __CUDA_ARCH__ >= 800
     template<>
     struct Apply_PreOp<FuncPreMulSum<__nv_fp8_e5m2>, /*EltPerPack=*/2> {
@@ -635,11 +665,6 @@ struct Apply_PostOp<FuncSumPostDiv<T>, /*EltPerPack=*/1> {
 ////////////////////////////////////////////////////////////////////////////////
 // Apply_LoadMultimem
 
-template<typename Fn>
-struct Apply_LoadMultimem {
-  static constexpr int PackSize = 0; // Indicates not implemented
-};
-
 #define SIZEOF_BytePack_field_u16 2
 #define PTX_REG_BytePack_field_u16 "h"
 
@@ -651,11 +676,11 @@ struct Apply_LoadMultimem {
 
 #define DEFINE_Apply_LoadMultimem(Fn, T, op, ptx_ty, pack_field) \
   template<> \
-  struct Apply_LoadMultimem<Fn<T>> { \
-    static constexpr int PackSize = 1*(SIZEOF_BytePack_field_##pack_field); \
+  struct Apply_LoadMultimem<Fn<T>, SIZEOF_BytePack_field_##pack_field> { \
+    static constexpr int PackSize = SIZEOF_BytePack_field_##pack_field; \
     __device__ static BytePack<PackSize> load(Fn<T> fn, uintptr_t addr) { \
       BytePack<PackSize> ans; \
-      asm("multimem.ld_reduce.global." #op "." #ptx_ty " %0, [%1];" \
+      asm("multimem.ld_reduce.relaxed.sys.global." #op "." #ptx_ty " %0, [%1];" \
         : "=" PTX_REG_BytePack_field_##pack_field(ans.pack_field) \
         : "l"(addr)); \
       return ans; \
@@ -663,11 +688,11 @@ struct Apply_LoadMultimem {
   };
 #define DEFINE_Apply_LoadMultimem_v4(Fn, T, op, ptx_ty, pack_field) \
   template<> \
-  struct Apply_LoadMultimem<Fn<T>> { \
+  struct Apply_LoadMultimem<Fn<T>, 4*(SIZEOF_BytePack_field_##pack_field)> { \
     static constexpr int PackSize = 4*(SIZEOF_BytePack_field_##pack_field); \
     __device__ static BytePack<PackSize> load(Fn<T> fn, uintptr_t addr) { \
       BytePack<PackSize> ans; \
-      asm("multimem.ld_reduce.global." #op ".v4." #ptx_ty " {%0,%1,%2,%3}, [%4];" \
+      asm("multimem.ld_reduce.relaxed.sys.global." #op ".v4." #ptx_ty " {%0,%1,%2,%3}, [%4];" \
         : "=" PTX_REG_BytePack_field_##pack_field(ans.pack_field[0]), \
           "=" PTX_REG_BytePack_field_##pack_field(ans.pack_field[1]), \
           "=" PTX_REG_BytePack_field_##pack_field(ans.pack_field[2]), \
@@ -676,8 +701,45 @@ struct Apply_LoadMultimem {
       return ans; \
     } \
   };
+#define DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(Fn, T, op, ptx_ty, pack_field) \
+  DEFINE_Apply_LoadMultimem_v4(Fn, T, op, ptx_ty, pack_field) \
+  template<> \
+  struct Apply_LoadMultimem<Fn<T>, sizeof(T)> { \
+    __device__ static BytePack<sizeof(T)> load(Fn<T> fn, uintptr_t addr) { \
+      BytePack<2*sizeof(T)> tmp; \
+      asm("multimem.ld_reduce.relaxed.sys.global." #op "." #ptx_ty " %0, [%1];" \
+        : "=" PTX_REG_BytePack_field_##pack_field(tmp.pack_field) \
+        : "l"(addr & -uintptr_t(sizeof(T)))); \
+      return tmp.half[(addr/sizeof(T))%2]; \
+    } \
+  };
+
+template<typename Fn, int BytePerPack>
+struct Apply_LoadMultimem {
+  __device__ static BytePack<BytePerPack> load(Fn fn, uintptr_t addr) {
+    __trap();
+    return {};
+  }
+};
 
 #if __CUDA_ARCH__ >= 900 && CUDART_VERSION >= 12010
+  template<typename Fn>
+  struct LoadMultimem_BigPackSize {
+    using T = typename Fn::EltType;
+    static constexpr bool IsSum = std::is_same<Fn, FuncSum<T>>::value ||
+                                  std::is_same<Fn, FuncPreMulSum<T>>::value ||
+                                  std::is_same<Fn, FuncSumPostDiv<T>>::value;
+    static constexpr bool IsMinOrMax = std::is_same<Fn, FuncMin<T>>::value ||
+                                       std::is_same<Fn, FuncMax<T>>::value;
+    static constexpr bool IsFloat = IsFloatingPoint<T>::value;
+    static constexpr int BigPackSize =
+      IsFloat && IsSum && sizeof(T) < 8 ? 16 :
+      IsFloat && IsSum ? 8 :
+      IsFloat && IsMinOrMax && sizeof(T)==2 ? 16 :
+      !IsFloat && (IsSum||IsMinOrMax) && sizeof(T)>=4 ? sizeof(T) :
+      /*multimem.ld_reduce not supported:*/ 0;
+  };
+
   DEFINE_Apply_LoadMultimem(FuncSum, uint32_t, add, u32, u32)
   DEFINE_Apply_LoadMultimem(FuncMin, uint32_t, min, u32, u32)
   DEFINE_Apply_LoadMultimem(FuncMax, uint32_t, max, u32, u32)
@@ -694,31 +756,38 @@ struct Apply_LoadMultimem {
   DEFINE_Apply_LoadMultimem(FuncMin, int64_t, min, s64, u64)
   DEFINE_Apply_LoadMultimem(FuncMax, int64_t, max, s64, u64)
 
+  DEFINE_Apply_LoadMultimem(FuncSum, float, add, f32, u32)
   DEFINE_Apply_LoadMultimem_v4(FuncSum, float, add, f32, u32)
 
   DEFINE_Apply_LoadMultimem(FuncSum, double, add, f64, u64)
 
-  DEFINE_Apply_LoadMultimem_v4(FuncSum, half, add, f16x2, u32)
-  DEFINE_Apply_LoadMultimem_v4(FuncMin, half, min, f16x2, u32)
-  DEFINE_Apply_LoadMultimem_v4(FuncMax, half, max, f16x2, u32)
+  DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncSum, half, add, f16x2, u32)
+  DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncMin, half, min, f16x2, u32)
+  DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncMax, half, max, f16x2, u32)
 
   #if defined(__CUDA_BF16_TYPES_EXIST__)
-    DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_bfloat16, add, bf16x2, u32)
-    DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_bfloat16, min, bf16x2, u32)
-    DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_bfloat16, max, bf16x2, u32)
+    DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncSum, __nv_bfloat16, add, bf16x2, u32)
+    DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncMin, __nv_bfloat16, min, bf16x2, u32)
+    DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncMax, __nv_bfloat16, max, bf16x2, u32)
   #endif
-  #if defined(__CUDA_FP8_TYPES_EXIST__)  
-    DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_fp8_e4m3, add, e4m3x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_fp8_e4m3, min, e4m3x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_fp8_e4m3, max, e4m3x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncSum, __nv_fp8_e5m2, add, e5m2x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncMin, __nv_fp8_e5m2, min, e5m2x2, u16)
-    DEFINE_Apply_LoadMultimem_v4(FuncMax, __nv_fp8_e5m2, max, e5m2x2, u16)
+  #if defined(__CUDA_FP8_TYPES_EXIST__)
+    DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncSum, __nv_fp8_e4m3, add, e4m3x2, u16)
+    DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncMin, __nv_fp8_e4m3, min, e4m3x2, u16)
+    DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncMax, __nv_fp8_e4m3, max, e4m3x2, u16)
+    DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncSum, __nv_fp8_e5m2, add, e5m2x2, u16)
+    DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncMin, __nv_fp8_e5m2, min, e5m2x2, u16)
+    DEFINE_Apply_LoadMultimem_v4x2_and_subhalf(FuncMax, __nv_fp8_e5m2, max, e5m2x2, u16)
   #endif
+#else
+  template<typename Fn>
+  struct LoadMultimem_BigPackSize {
+    static constexpr int BigPackSize = 0;
+  };
 #endif
 
 #undef DEFINE_Apply_LoadMultimem
 #undef DEFINE_Apply_LoadMultimem_v4
+#undef DEFINE_Apply_LoadMultimem_v4x2_and_subhalf
 #undef SIZEOF_BytePack_field_u64
 #undef PTX_REG_BytePack_field_u64
 #undef SIZEOF_BytePack_field_u32

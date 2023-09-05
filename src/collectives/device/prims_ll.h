@@ -1,7 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
  * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
- *
  * See LICENSE.txt for license information
  ************************************************************************/
 
@@ -370,7 +369,7 @@ template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
     }
     barrier();
   }
-
+  
   __device__ __forceinline__ void loadRecvConn(struct ncclConnInfo* conn, int i) {
     recvBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
     recvStep[i] = conn->step;
@@ -400,22 +399,22 @@ template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
  public:
   __device__  Primitives(
       const int tid, const int nthreads, int const *recvPeers, int const *sendPeers,
-      void const *inputBuf, void *outputBuf, uint64_t redOpArg, int group=0
+      void const *inputBuf, void *outputBuf, uint64_t redOpArg, uint8_t group=0,
+      uint8_t connIndexRecv=0, uint8_t connIndexSend=0
     ):
     redOp(redOpArg),
-    tid(tid), nthreads(nthreads), wid(tid%WARP_SIZE), group(group&(uint16_t)0xFFFF),
+    tid(tid), nthreads(nthreads), wid(tid%WARP_SIZE), group(group),
     stepLines(ncclShmem.comm.buffSizes[NCCL_PROTO_LL]/NCCL_STEPS/sizeof(ncclLLFifoLine)) {
-    int connIndex = group >> 16;
     auto *channel = &ncclShmem.channel;
     // If we are going to support oneshot collNet + LL, then we would need to add connector index here
     int nrecv=0, nsend=0;
     // We compare with Fan::MaxRecv here because this->MaxRecv is always at least 1
     while (nrecv < Fan::MaxRecv && recvPeers[nrecv] >= 0) {
-      loadRecvConn(&channel->peers[recvPeers[nrecv]].recv[connIndex], nrecv);
+      loadRecvConn(&channel->peers[recvPeers[nrecv]]->recv[connIndexRecv], nrecv);
       nrecv++;
     }
     while (nsend < MaxSend && sendPeers[nsend] >= 0) {
-      loadSendConn(&channel->peers[sendPeers[nsend]].send[connIndex], nsend);
+      loadSendConn(&channel->peers[sendPeers[nsend]]->send[connIndexSend], nsend);
       nsend++;
     }
     this->fan = Fan(nrecv, nsend);
@@ -468,7 +467,7 @@ template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
   __device__ void recvReduceCopySend(intptr_t inpIx, intptr_t outIx, int eltN, bool postOp=false) {
     return LLGenericOp<1, 1, Input, Output>(inpIx, outIx, eltN, postOp);
   }
-    // MSCCL primitives
+  // MSCCL primitives
   __device__ void sendWithBarrier(intptr_t inpIx, int eltN) {
     send(inpIx, eltN);
     // This is the only primitive.instruction where there is no barrier at the end, add it

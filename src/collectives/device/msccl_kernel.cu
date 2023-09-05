@@ -156,7 +156,6 @@ __device__ __forceinline__ void mscclRunInterpreter(
   int sendPeer = mscclShmem.mscclTB.sendPeer;
 
   const ssize_t chunkSize = int(Proto::calcBytePerStep()/sizeof(T) * (Proto::Id == NCCL_PROTO_SIMPLE ? MSCCL_CHUNKSTEPS : 1));
-  
   int minChunkSize;
   if (Proto::Id == NCCL_PROTO_LL)
     minChunkSize = nthreads*(Proto::calcBytePerGrain()/sizeof(T));
