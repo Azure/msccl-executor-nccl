@@ -120,7 +120,6 @@ ncclResult_t mscclSetupConnections(struct mscclAlgo* hostAlgo, ncclComm_t comm) 
 
 static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t comm, bool* justInquire) {
   mscclStatus& status = mscclGetStatus();
-  mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   struct ncclProxyOp proxyOp = {};
 
   // proxyOp.connIndex = 0;
@@ -200,7 +199,6 @@ ncclResult_t mscclSetupProxy(struct mscclAlgo* hostAlgo, ncclComm_t comm, cudaSt
       p.userData = params;
       CUDACHECK(cudaGraphAddHostNode(&callbackNode, threadLocalStatus.graph, nullptr, 0, &p));
     }
-    bool justInquire = false;
     mscclGetSavedProxyArgs()[threadLocalStatus.captureId].emplace_back(hostAlgo, comm);
   }
   return ncclSuccess;
@@ -447,7 +445,7 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   {
     block = {NCCL_MAX_NTHREADS, 1, 1};
   }
-  struct ncclDevRedOpFull opFull;
+  struct ncclDevRedOpFull opFull = {};
   NCCLCHECK(hostToDevRedOp(&opFull, op, dataType, comm));
   size_t smem = ncclShmemDynamicSize(comm->cudaArch);
   
