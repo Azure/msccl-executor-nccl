@@ -1,4 +1,6 @@
-<algo name="allreduce_ring_4channelsperring" proto="LL" nchannels="32" nchunksperloop="64" ngpus="8" coll="allreduce" inplace="1" minBytes="266240" maxBytes="2078720">
+<!-- Copyright (c) Microsoft Corporation. -->
+<!-- Licensed under the MIT License. -->
+<algo name="allreduce_ring_4channelsperring" proto="LL" nchannels="32" nchunksperloop="64" ngpus="8" coll="allreduce" inplace="1" outofplace="0" minBytes="266240" maxBytes="2078720">
   <gpu id="0" i_chunks="64" o_chunks="0" s_chunks="0">
     <tb id="0" send="1" recv="7" chan="0">
       <step s="0" type="s" srcbuf="i" srcoff="0" dstbuf="i" dstoff="0" cnt="1" depid="-1" deps="-1" hasdep="0"/>
