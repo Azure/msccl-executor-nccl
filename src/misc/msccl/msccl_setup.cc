@@ -118,7 +118,7 @@ ncclResult_t mscclSetupConnections(struct mscclAlgo* hostAlgo, ncclComm_t comm) 
   return ncclSuccess;
 }
 
-static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t comm, bool* justInquire) {
+static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t comm) {
   mscclStatus& status = mscclGetStatus();
   struct ncclProxyOp proxyOp = {};
 
@@ -149,7 +149,7 @@ static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t c
       }
       proxyOp.nsteps = nLoopsChunkSteps * nRecvs;
       if (proxyOp.nsteps > 0) {
-        NCCLCHECK(mscclSaveProxy(comm, ncclChannel, proxyRecv, recvPeer->peer, &proxyOp, 0, justInquire));
+        NCCLCHECK(mscclSaveProxy(comm, ncclChannel, proxyRecv, recvPeer->peer, &proxyOp, 0));
       }
     }
     for (int i=0; i<mscclChannel->nSendPeers; i++){
@@ -162,7 +162,7 @@ static ncclResult_t mscclSetupProxyImpl(struct mscclAlgo* hostAlgo, ncclComm_t c
       }
       proxyOp.nsteps = nLoopsChunkSteps * nSends;
       if (proxyOp.nsteps > 0) {
-        NCCLCHECK(mscclSaveProxy(comm, ncclChannel, proxySend, sendPeer->peer, &proxyOp, 0, justInquire));
+        NCCLCHECK(mscclSaveProxy(comm, ncclChannel, proxySend, sendPeer->peer, &proxyOp, 0));
       }
     }
   }
@@ -176,7 +176,7 @@ static void CUDART_CB mscclSetupProxyCallback(void *args) {
   std::vector<struct mscclProxyArg>* params = (std::vector<struct mscclProxyArg>*)args;
   INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxyCallback: proxy args size: %ld\n", params->size());
   for (auto &p : *params) {
-    mscclSetupProxyImpl(p.hostAlgo, p.comm, nullptr);
+    mscclSetupProxyImpl(p.hostAlgo, p.comm);
   }    
 }
 
@@ -186,7 +186,7 @@ ncclResult_t mscclSetupProxy(struct mscclAlgo* hostAlgo, ncclComm_t comm, cudaSt
   mscclSavedProxyArgs& savedProxyArgs = mscclGetSavedProxyArgs();
   if (threadLocalStatus.captureStatus == mscclNoCapture) {
     INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxy: no capture\n");
-    NCCLCHECK(mscclSetupProxyImpl(hostAlgo, comm, nullptr));
+    NCCLCHECK(mscclSetupProxyImpl(hostAlgo, comm));
   } else if (status.needsProxy) {
     INFO(NCCL_INIT|NCCL_NET,"mscclSetupProxy: capture\n");
     if (savedProxyArgs[threadLocalStatus.captureId].size() == 0) {
