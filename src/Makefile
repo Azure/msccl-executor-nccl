@@ -133,8 +133,8 @@ $(OBJDIR)/%.o : %.cc $(INCTARGETS)
 
 $(MSCCLALGORITHMDIR):
 	mkdir -p $(MSCCLALGORITHMDIR)
-	cp -r tools/msccl-algorithms $(MSCCLALGORITHMDIR)
-	
+	cp -r tools/msccl-algorithms/* $(MSCCLALGORITHMDIR)
+
 clean :
 	$(MAKE) -C collectives/device clean
 	rm -rf ${INCDIR} ${LIBDIR} ${PKGDIR} ${OBJDIR}
