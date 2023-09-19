@@ -13,6 +13,11 @@
 #include "msccl/msccl_setup.h"
 #include "msccl/msccl_status.h"
 
+#if CUDART_VERSION >= 12000
+// MSCCL uses the "Remote" Mem Sync domain by default
+NCCL_PARAM(MscclMemSyncDomain, "MSCCL_MEM_SYNC_DOMAIN", cudaLaunchMemSyncDomainRemote);
+#endif
+
 ncclResult_t mscclGetCaptureStatus(cudaStream_t stream) {
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   mscclSavedProxyArgs& savedProxyArgs = mscclGetSavedProxyArgs();
@@ -466,8 +471,7 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
   void *args[3] = {&comm->devComm, &devAlgo, &work};
   void *func = mscclKernelEntries[(opFull.op * ncclNumTypes + dataType) * NCCL_NUM_PROTOCOLS + hostAlgo->protocol];
 
-  #if 0
-  // #if CUDART_VERSION >= 11080
+  #if CUDART_VERSION >= 11080
   int driverVersion;
   NCCLCHECK(ncclCudaDriverVersion(&driverVersion));
   if (driverVersion >= 11080) {
@@ -499,7 +503,7 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
     if (compCap >= 90 && driverVersion >= 12000) {
       // Set the NCCL Mem Sync domain on CUDA 12.0 and later (sm90)
       launchAttrs[attrs].id = cudaLaunchAttributeMemSyncDomain;
-      launchAttrs[attrs++].val.memSyncDomain = (cudaLaunchMemSyncDomain) ncclParamMemSyncDomain();
+      launchAttrs[attrs++].val.memSyncDomain = (cudaLaunchMemSyncDomain) ncclParamMscclMemSyncDomain();
     }
     #endif
     launchConfig.gridDim = grid;
