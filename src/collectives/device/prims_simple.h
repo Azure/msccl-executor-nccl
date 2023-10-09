@@ -7,6 +7,10 @@
 
 #include "msccl/msccl_struct.h"
 
+#if defined(ENABLE_NPKIT)
+#include "npkit/npkit.h"
+#endif
+
 template<typename T, typename RedOp, typename Fan, int Direct,
          int SlicePerChunk, int StepPerSlice, int Unroll, int P2p, int MultimemSrcs, int MultimemDsts>
 class Primitives<
@@ -47,6 +51,15 @@ class Primitives<
   };
   uint64_t *connStepPtr;
   uint64_t connStepCache; // Cache last seen value of (*connStepPtr)
+
+#if defined(ENABLE_NPKIT)
+public:
+  int npKitCtxIdx = 0;
+  uint64_t npKitDataProcessEntryTime = 0;
+  uint64_t npKitDataProcessExitTime = 0;
+  uint64_t npKitDataProcessTotalTime = 0;
+private:
+#endif
 
   // Don't use barrier 0 as it's used by the final sync
   __device__ void barrier() {
@@ -235,20 +248,92 @@ class Primitives<
         if (DirectRecv && ncclShmem.groups[group].srcs[0] == ncclShmem.groups[group].dsts[0]) {
           // We can only have one direct receive. Since srcs[0] == dstPtr+offset, skip one copy
           if (Send) {
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_ENTRY)
+            if (tid == 0) {
+              NpKit::CollectGpuEvent(NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_ENTRY, sliceSize*sizeof(T), 0, clock64(),
+                  ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+            }
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME)
+            if (tid == 0) {
+              npKitDataProcessEntryTime = clock64();
+            }
+#endif
+
             reduceCopy<Unroll, RedOp, T, 0, 1, 1, 0, 1, MaxSend, /*PreOpSrcs*/0>
               (tid, nworkers, /*redArg*/0, /*preOpArgs*/nullptr, /*postOp*/false,
                1, ncclShmem.groups[group].srcs,
                fan.nsend(), ncclShmem.groups[group].dsts+1,
                workSize);
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME)
+            if (tid == 0) {
+              npKitDataProcessExitTime = clock64();
+              npKitDataProcessTotalTime += npKitDataProcessExitTime - npKitDataProcessEntryTime;
+            }
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_EXIT)
+            if (tid == 0) {
+              NpKit::CollectGpuEvent(NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_EXIT, sliceSize*sizeof(T), 0, clock64(),
+                  ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+            }
+#endif
+
           }
         } else if (DirectSend && !DirectRecv && SrcBuf != Input && ncclShmem.groups[group].dsts[Dst] == nullptr) {
           // For broadcast in CollNet to do empty send
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_ENTRY)
+          if (tid == 0) {
+            NpKit::CollectGpuEvent(NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_ENTRY, sliceSize*sizeof(T), 0, clock64(),
+                ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+          }
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME)
+          if (tid == 0) {
+            npKitDataProcessEntryTime = clock64();
+          }
+#endif
+
           reduceCopy<Unroll, RedOp, T, 0, 1, 1, 0, 1, 1, /*PreOpSrcs*/0>
             (tid, nworkers, ncclShmem.redOpArgs[0],  nullptr, postOp,
              Recv, ncclShmem.groups[group].srcs,
              Dst, ncclShmem.groups[group].dsts,
              workSize);
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME)
+          if (tid == 0) {
+            npKitDataProcessExitTime = clock64();
+            npKitDataProcessTotalTime += npKitDataProcessExitTime - npKitDataProcessEntryTime;
+          }
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_EXIT)
+          if (tid == 0) {
+            NpKit::CollectGpuEvent(NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_EXIT, sliceSize*sizeof(T), 0, clock64(),
+                ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+          }
+#endif
+
         } else {
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_ENTRY)
+          if (tid == 0) {
+            NpKit::CollectGpuEvent(NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_ENTRY, sliceSize*sizeof(T), 0, clock64(),
+                ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+          }
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME)
+          if (tid == 0) {
+            npKitDataProcessEntryTime = clock64();
+          }
+#endif
+
           constexpr int PreOpSrcs = SrcBuf != Input ? 0 :
                                     DirectRecv*MaxRecv == NCCL_MAX_DIRECT_ARITY ? (1+NCCL_MAX_DIRECT_ARITY) : 1;
           reduceCopy<Unroll, RedOp, T,
@@ -258,6 +343,21 @@ class Primitives<
              Recv*fan.nrecv()+Src, ncclShmem.groups[group].srcs,
              Send*fan.nsend()+Dst, ncclShmem.groups[group].dsts,
              workSize);
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME)
+          if (tid == 0) {
+            npKitDataProcessExitTime = clock64();
+            npKitDataProcessTotalTime += npKitDataProcessExitTime - npKitDataProcessEntryTime;
+          }
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_EXIT)
+          if (tid == 0) {
+            NpKit::CollectGpuEvent(NPKIT_EVENT_PRIM_SIMPLE_REDUCE_OR_COPY_MULTI_EXIT, sliceSize*sizeof(T), 0, clock64(),
+                ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+          }
+#endif
+
         }
         barrier(); // This barrier has a counterpart in following loop
         postPeer<Recv, Send>(0 < sliceSize);
@@ -286,6 +386,13 @@ class Primitives<
 
   template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
   __device__ __forceinline__ void mscclGenericOp(T** srcs, int nsrcs, T** dsts, int ndsts, int nelem) {
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_MSCCL_GENERIC_OP_ENTRY)
+    if (tid == 0) {
+      NpKit::CollectGpuEvent(NPKIT_EVENT_MSCCL_GENERIC_OP_ENTRY, nelem*sizeof(T), 0, clock64(),
+          ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+    }
+#endif
+
     nelem = nelem < 0 ? 0 : nelem;
     if (tid < nworkers) {
       if (REDUCE){
@@ -310,6 +417,14 @@ class Primitives<
         }
       }
     }
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_MSCCL_GENERIC_OP_EXIT)
+    if (tid == 0) {
+      NpKit::CollectGpuEvent(NPKIT_EVENT_MSCCL_GENERIC_OP_EXIT, nelem*sizeof(T), 0, clock64(),
+          ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+    }
+#endif
+
     barrier();
   }
 
