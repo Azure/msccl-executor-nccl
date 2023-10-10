@@ -191,7 +191,7 @@ __device__ __forceinline__ void mscclRunInterpreter(
   Primitives<T, RedOp, FanAsymmetric<1,1>, 1, Proto, 0> prims
     (tid, nthreads, &recvPeer, &sendPeer, thisInput, thisOutput, mscclShmem.work.redOpArg);
 
-#if defined(ENABLE_NPKIT)
+  #if defined(ENABLE_NPKIT)
   if (tid == 0) {
     prims.npKitCtxIdx = npKitCtxIdx;
   }
