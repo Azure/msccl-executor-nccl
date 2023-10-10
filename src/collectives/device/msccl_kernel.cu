@@ -131,7 +131,7 @@ __device__ __forceinline__ void mscclRunInterpreter(
   }
   __syncthreads(); // publish shmem
 
-  #if defined(ENABLE_NPKIT)
+#if defined(ENABLE_NPKIT)
   int npKitCtxIdx = bid;
 #endif
 
