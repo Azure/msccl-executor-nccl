@@ -12,6 +12,9 @@
 #include <dlfcn.h>
 #include <error.h>
 #include <link.h>
+#include <string>
+#include <curl/curl.h>
+#include <nlohmann/json.hpp>
 
 #include "alloc.h"
 #include "checks.h"
@@ -77,8 +80,51 @@ static const char* mscclSchedulerPathEnv = "MSCCL_SCHEDULER";
 static const char* mscclSchedulerDefaultPath = "libmsccl-scheduler.so";
 static const char* mscclAlgoDirEnv = "MSCCL_ALGO_DIR";
 static const char* mscclAlgoDefaultDir = "msccl-algorithms";
+static const char* mscclAzureVMDetectionAgent = "http://169.254.169.254/metadata/instance?api-version=2019-06-04";
 extern "C" bool mscclUnitTestMode() __attribute__((__weak__));
 static const char* mscclUnitTestAlgoDefaultDir = "msccl-unit-test-algorithms";
+
+static size_t writeCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
+    userp->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
+static std::string updateAlgoDirByVMSize(std::string algoDir){
+    CURL* curl;
+    CURLcode res;
+    std::string readBuffer;
+    std::string vmSize;
+    std::string updatedAlgoDir = algoDir;
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+    if(curl) {
+        curl_easy_setopt(curl, CURLOPT_URL, mscclAzureVMDetectionAgent);
+        struct curl_slist *headers = NULL;
+        headers = curl_slist_append(headers, "Metadata:true");
+        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
+        res = curl_easy_perform(curl);
+        if(res != CURLE_OK) {
+            WARN("MSCCL Get Azure VM Size failed: %s", curl_easy_strerror(res));
+        }
+        else {
+            auto json = nlohmann::json::parse(readBuffer);
+            vmSize = json["compute"]["vmSize"].get<std::string>();
+        }
+        curl_easy_cleanup(curl);
+    }
+    curl_global_cleanup();
+    if (vmSize.find("ND") != std::string::npos && vmSize.find("A100") != std::string::npos) {
+      updatedAlgoDir.append("/ndv4");
+    }
+    else if (vmSize.find("ND") != std::string::npos && vmSize.find("H100") != std::string::npos) {
+      updatedAlgoDir.append("/ndv5");
+    }
+    return updatedAlgoDir;
+}
 
 static ncclResult_t mscclInternalSchedulerInit() {
   mscclStatus& status = mscclGetStatus();
@@ -94,9 +140,10 @@ static ncclResult_t mscclInternalSchedulerInit() {
     }
     std::string selfLibPath = link_map_ptr->l_name;
     mscclAlgoDirStr = selfLibPath.substr(0, selfLibPath.find_last_of("/\\") + 1);
-    mscclAlgoDirStr += (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestAlgoDefaultDir : mscclAlgoDefaultDir;
+    mscclAlgoDirStr += (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestAlgoDefaultDir : updateAlgoDirByVMSize(std::string(mscclAlgoDefaultDir));
     mscclAlgoDir = mscclAlgoDirStr.c_str();
   }
+  INFO(NCCL_INIT, "MSCCL: Internal Scheduler will use %s as algorithm directory", mscclAlgoDir);
   struct dirent *entry = nullptr;
   DIR *dp = nullptr;
   dp = opendir(mscclAlgoDir);
