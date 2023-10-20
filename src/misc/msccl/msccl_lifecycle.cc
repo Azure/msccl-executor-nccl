@@ -80,11 +80,11 @@ static const char* mscclSchedulerPathEnv = "MSCCL_SCHEDULER";
 static const char* mscclSchedulerDefaultPath = "libmsccl-scheduler.so";
 static const char* mscclAlgoDirEnv = "MSCCL_ALGO_DIR";
 static const char* mscclAlgoDefaultDir = "msccl-algorithms";
-static const char* azureVMDetectionAgent = "http://169.254.169.254/metadata/instance?api-version=2019-06-04";
+static const char* mscclAzureVMDetectionAgent = "http://169.254.169.254/metadata/instance?api-version=2019-06-04";
 extern "C" bool mscclUnitTestMode() __attribute__((__weak__));
 static const char* mscclUnitTestAlgoDefaultDir = "msccl-unit-test-algorithms";
 
-static size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
+static size_t writeCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
     userp->append((char*)contents, size * nmemb);
     return size * nmemb;
 }
@@ -99,11 +99,11 @@ static std::string updateAlgoDirByVMSize(std::string algoDir){
     curl_global_init(CURL_GLOBAL_DEFAULT);
     curl = curl_easy_init();
     if(curl) {
-        curl_easy_setopt(curl, CURLOPT_URL, azureVMDetectionAgent);
+        curl_easy_setopt(curl, CURLOPT_URL, mscclAzureVMDetectionAgent);
         struct curl_slist *headers = NULL;
         headers = curl_slist_append(headers, "Metadata:true");
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 1L);
         res = curl_easy_perform(curl);
@@ -121,7 +121,7 @@ static std::string updateAlgoDirByVMSize(std::string algoDir){
       updatedAlgoDir.append("/ndv4");
     }
     else if (vmSize.find("ND") != std::string::npos && vmSize.find("H100") != std::string::npos) {
-      updatedAlgoDir.append("/ndv4");
+      updatedAlgoDir.append("/ndv5");
     }
     return updatedAlgoDir;
 }
