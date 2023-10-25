@@ -14,7 +14,7 @@ MSCCL-EXECUTOR-NCCL is a stand-alone library of standard communication routines 
 To build the library :
 
 ```sh
-$ git clone https://github.com/microsoft/msccl.git --recurse-submodules
+$ git clone https://github.com/Azure/msccl.git --recurse-submodules
 $ cd msccl/executor/msccl-executor-nccl
 $ make -j src.build
 ```
