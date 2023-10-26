@@ -514,11 +514,11 @@ ncclResult_t mscclSetupKernel(const void* sendBuff, void* recvBuff, size_t count
     launchConfig.stream = stream;
 
     CUDACHECK(cudaLaunchKernelExC(&launchConfig, func, args));
-    return ncclSuccess;
   }
+  #else
+  CUDACHECK(cudaLaunchKernel(func, grid, block, args, smem, stream));
   #endif
   
-  CUDACHECK(cudaLaunchKernel(func, grid, block, args, smem, stream));
   status.workIndex++;
   status.lastStream = stream;
   return ncclSuccess;
