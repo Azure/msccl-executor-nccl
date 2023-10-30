@@ -47,7 +47,7 @@ STATICLIBTARGET := $(STATICLIBNAME)
 PKGTARGET  := $(PKGCONFIGFILE)
 LIBOBJ     := $(LIBSRCFILES:%.cc=$(OBJDIR)/%.o)
 DEPFILES   := $(LIBOBJ:%.o=%.d)
-LDFLAGS    += -L${CUDA_LIB} -l$(CUDARTLIB) -lpthread -lrt -ldl -lcurl
+LDFLAGS    += -L${CUDA_LIB} -l$(CUDARTLIB) -lpthread -lrt -ldl
 
 DEVICELIB  := $(BUILDDIR)/obj/collectives/device/colldevice.a
 
