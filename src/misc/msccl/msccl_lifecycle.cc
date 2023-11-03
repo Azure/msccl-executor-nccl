@@ -106,7 +106,7 @@ static ncclResult_t mscclInternalSchedulerInit() {
     mscclAlgoShareDirStr += (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestAlgoShareDirPath : mscclAlgoShareDirPath;
     mscclAlgoShareDir = mscclAlgoShareDirStr.c_str();
   }
-  INFO(NCCL_INIT, "MSCCL: Internal Scheduler will use %s as algorithm directory", mscclAlgoDir);
+  INFO(NCCL_INIT, "MSCCL: Internal Scheduler will use %s as algorithm directory and %s as share algorithm directory ", mscclAlgoDir, mscclAlgoShareDir);
   struct dirent *entry = nullptr;
   DIR *dp = nullptr;
   dp = opendir(mscclAlgoDir);
