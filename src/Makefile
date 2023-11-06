@@ -47,7 +47,7 @@ STATICLIBTARGET := $(STATICLIBNAME)
 PKGTARGET  := $(PKGCONFIGFILE)
 LIBOBJ     := $(LIBSRCFILES:%.cc=$(OBJDIR)/%.o)
 DEPFILES   := $(LIBOBJ:%.o=%.d)
-LDFLAGS    += -L${CUDA_LIB} -l$(CUDARTLIB) -lpthread -lrt -ldl -lcurl
+LDFLAGS    += -L${CUDA_LIB} -l$(CUDARTLIB) -lpthread -lrt -ldl
 
 DEVICELIB  := $(BUILDDIR)/obj/collectives/device/colldevice.a
 
@@ -133,7 +133,6 @@ $(OBJDIR)/%.o : %.cc $(INCTARGETS)
 
 $(MSCCLALGORITHMDIR):
 	mkdir -p $(MSCCLALGORITHMDIR)
-	cp -r tools/msccl-algorithms/* $(MSCCLALGORITHMDIR)
 
 clean :
 	$(MAKE) -C collectives/device clean
@@ -142,7 +141,7 @@ clean :
 install : build
 	mkdir -p $(PREFIX)/lib
 	mkdir -p $(PREFIX)/lib/pkgconfig
-	mkdir -p $(PREFIX)/lib/msccl-algorithms
+	mkdir -p $(PREFIX)/share/nccl/msccl-algorithms
 	mkdir -p $(PREFIX)/include
 	cp -P -v $(BUILDDIR)/lib/lib* $(PREFIX)/lib/
 	cp -P -v $(BUILDDIR)/lib/pkgconfig/* $(PREFIX)/lib/pkgconfig/
