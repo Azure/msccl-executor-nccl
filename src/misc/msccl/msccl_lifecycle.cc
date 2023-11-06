@@ -121,7 +121,7 @@ static ncclResult_t mscclInternalSchedulerInit() {
   } else {
     fullDirPath = mscclAlgoDir;
   }
-  INFO(NCCL_INIT, "Using MSCCL files from %s", fullDirPath);
+  INFO(NCCL_INIT, "Using MSCCL Algo files from %s", fullDirPath);
   while ((entry = readdir(dp))) {
     if (entry->d_type != DT_LNK && entry->d_type != DT_REG) {
       continue;
