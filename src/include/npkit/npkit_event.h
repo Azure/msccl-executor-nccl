@@ -98,6 +98,6 @@
 #define NPKIT_EVENT_MSCCL_GENERIC_OP_ENTRY                      0x50
 #define NPKIT_EVENT_MSCCL_GENERIC_OP_EXIT                       0x51
 #define NPKIT_EVENT_MSCCL_REDUCE_ENTRY                          0x52
-#define NPKIT_EVENT_MSCCL_REDUCE_EXIT                           0x5
+#define NPKIT_EVENT_MSCCL_REDUCE_EXIT                           0x53
 
 #endif
