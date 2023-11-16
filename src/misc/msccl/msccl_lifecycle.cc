@@ -79,8 +79,8 @@ static const char* mscclAlgoDirEnv = "MSCCL_ALGO_DIR";
 static const char* mscclAlgoDefaultDir = "msccl-algorithms";
 extern "C" bool mscclUnitTestMode() __attribute__((__weak__));
 static const char* mscclUnitTestAlgoDefaultDir = "msccl-unit-test-algorithms";
-static const char* mscclAlgoShareDirPath = "../share/nccl/msccl-algorithms";
-static const char* mscclUnitTestAlgoShareDirPath = "../share/nccl/msccl-unit-test-algorithms";
+static const char* mscclAlgoShareDirPath = "../../share/nccl/msccl-algorithms";
+static const char* mscclUnitTestAlgoShareDirPath = "../../share/nccl/msccl-unit-test-algorithms";
 
 static ncclResult_t mscclInternalSchedulerInit() {
   mscclStatus& status = mscclGetStatus();
