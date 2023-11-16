@@ -79,8 +79,8 @@ static const char* mscclAlgoDirEnv = "MSCCL_ALGO_DIR";
 static const char* mscclAlgoDefaultDir = "msccl-algorithms";
 extern "C" bool mscclUnitTestMode() __attribute__((__weak__));
 static const char* mscclUnitTestAlgoDefaultDir = "msccl-unit-test-algorithms";
-static const char* mscclAlgoShareDirPath = "../../share/nccl/msccl-algorithms";
-static const char* mscclUnitTestAlgoShareDirPath = "../../share/nccl/msccl-unit-test-algorithms";
+static const char* mscclAlgoShareDirPath = "../share/nccl/msccl-algorithms";
+static const char* mscclUnitTestAlgoShareDirPath = "../share/nccl/msccl-unit-test-algorithms";
 
 static ncclResult_t mscclInternalSchedulerInit() {
   mscclStatus& status = mscclGetStatus();
@@ -103,7 +103,15 @@ static ncclResult_t mscclInternalSchedulerInit() {
     mscclAlgoDir = mscclAlgoDirStr.c_str();
     // Get share Directory Paths
     mscclAlgoShareDirStr = selfLibPath.substr(0, selfLibPath.find_last_of("/\\") + 1);
-    mscclAlgoShareDirStr += (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestAlgoShareDirPath : mscclAlgoShareDirPath;
+    if (mscclAlgoShareDirStr.find("/local") != std::string::npos)
+    {
+      mscclAlgoShareDirStr += (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestAlgoShareDirPath : mscclAlgoShareDirPath;
+    }
+    else
+    {
+      mscclAlgoShareDirStr += "../";
+      mscclAlgoShareDirStr += (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestAlgoShareDirPath : mscclAlgoShareDirPath; 
+    }
     mscclAlgoShareDir = mscclAlgoShareDirStr.c_str();
   }
   INFO(NCCL_INIT, "MSCCL: Internal Scheduler will use %s as algorithm directory and %s as share algorithm directory ", mscclAlgoDir, mscclAlgoShareDir);
