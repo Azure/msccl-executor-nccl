@@ -107,10 +107,10 @@ static ncclResult_t mscclInternalSchedulerInit() {
     mscclAlgoDir = mscclAlgoDirStr.c_str();
     // Get share Directory Paths
     mscclAlgoShareDirStr = selfLibPath.substr(0, selfLibPath.find_last_of("/\\") + 1);
-    mscclAlgoShareDirStr += (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestAlgoShareDirPath : mscclAlgoShareDirPath; 
+    mscclAlgoShareDirStr += (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestAlgoShareDirPath : mscclAlgoShareDirPath;
     mscclAlgoShareDir = mscclAlgoShareDirStr.c_str();
 
-    mscclPackageInstalledAlgoShareDirStr = (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestPackageInstalledAlgoShareDirPath : mscclPackageInstalledAlgoShareDirPath; 
+    mscclPackageInstalledAlgoShareDirStr = (mscclUnitTestMode && mscclUnitTestMode()) ? mscclUnitTestPackageInstalledAlgoShareDirPath : mscclPackageInstalledAlgoShareDirPath;
     mscclPackageInstalledAlgoShareDir = mscclPackageInstalledAlgoShareDirStr.c_str();
   }
   INFO(NCCL_INIT, "MSCCL: Internal Scheduler will use %s as algorithm directory and %s as share algorithm directory and %s as package installed share algorithm directory ", mscclAlgoDir, mscclAlgoShareDir, mscclPackageInstalledAlgoShareDir);
