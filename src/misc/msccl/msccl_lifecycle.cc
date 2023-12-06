@@ -26,6 +26,7 @@ NCCL_PARAM(MscclEnabled, "MSCCL_ENABLE", 1);
 static std::atomic<bool> mscclInitialized;
 static bool mscclSchedulerTriedLoadAlgo = false;
 static std::mutex mscclLifecycleMutex;
+extern int nicfailure;
 
 int getEnvInt(const char* env, int64_t deftVal) {
   char* str = getenv(env);
@@ -154,7 +155,7 @@ static ncclResult_t mscclInternalSchedulerInit() {
   return ncclSuccess;
 }
 
-static ncclResult_t mscclSchedulerInit() {
+static ncclResult_t mscclSchedulerInit(ncclComm_t comm) {
   mscclStatus& status = mscclGetStatus();
   bool useInternalScheduler = false;
 
@@ -177,7 +178,7 @@ static ncclResult_t mscclSchedulerInit() {
   if (useInternalScheduler) {
     NCCLCHECK(mscclInternalSchedulerInit());
   } else {
-    NCCLCHECK(status.mscclSchedulerPtr->init());
+    NCCLCHECK(status.mscclSchedulerPtr->init(comm));
   }
   return ncclSuccess;
 }
@@ -217,7 +218,7 @@ ncclResult_t mscclInit(ncclComm_t comm) {
     status.needsProxy = false;
     mscclSchedulerTriedLoadAlgo = false;
 
-    NCCLCHECK(mscclSchedulerInit());
+    NCCLCHECK(mscclSchedulerInit(comm));
 
     mscclInitialized.store(true, std::memory_order_release);
   }
@@ -312,7 +313,7 @@ static ncclResult_t mscclSetSavedSchedulerParam(
   const void* sendBuff, const size_t sendCounts[], const size_t sDisPls[],
   void* recvBuff, const size_t recvCounts[], const size_t rDisPls[],
   size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
-  mscclFunc_t func, ncclComm_t comm, cudaStream_t stream,
+  mscclFunc_t func, ncclComm_t comm, cudaStream_t stream, bool repair,
   struct mscclSavedSchedulerParam* param) {
   param->p.sendBuff = sendBuff;
   param->p.sendCounts = sendCounts;
@@ -328,6 +329,7 @@ static ncclResult_t mscclSetSavedSchedulerParam(
   param->p.func = func;
   param->p.rank = comm->rank;
   param->p.nRanks = comm->nRanks;
+  param->p.repair = repair;
   param->comm = comm;
   param->stream = stream;
   return ncclSuccess;
@@ -413,27 +415,37 @@ ncclResult_t mscclEnqueueCheck(
     void* recvBuff, const size_t recvCounts[], const size_t rDisPls[],
     size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
     mscclFunc_t func, ncclComm_t comm, cudaStream_t stream) {
+  INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck mscclNoGroup");
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
+  bool repair = false;
+
+  if (*comm->abortFlag)
+  {
+    *comm->abortFlag=0;
+    repair = true;
+  }
 
   threadLocalStatus.savedSchedulerParams.push_back({});
   NCCLCHECK(mscclSetSavedSchedulerParam(
     sendBuff, sendCounts, sDisPls, recvBuff, recvCounts, rDisPls,
-    count, dataType, root, peer, op, func, comm, stream,
+    count, dataType, root, peer, op, func, comm, stream, repair,
     &threadLocalStatus.savedSchedulerParams.back()));
 
   switch (threadLocalStatus.groupStatus) {
     case mscclNoGroup:
-      if (comm->mscclCompatible) {
-            NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
-            if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
-              NCCLCHECK(mscclRunSavedParams());
-              break;
-            }
+      if (comm->mscclCompatible) {  
+          INFO(NCCL_INIT, "MSCCL: mscclEnqueueCheck mscclNoGroup, com abort flag: %d, nic failure check: %d", *comm->abortFlag, nicfailure);
+          NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
+          if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
+            NCCLCHECK(mscclRunSavedParams());
+            break;
+          }
         }
       NCCLCHECK(mscclFallBackSavedParams());
       break;
     case mscclGroupSupportedOp:
       if (comm->mscclCompatible) {
+          INFO(NCCL_INIT, "MSCCL: mscclEnqueueCheck mscclGroupSupportedOp, com abort flag: %d, nic failure check: %d", *comm->abortFlag, nicfailure);
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
             // Only save counts and displs when there is suitable MSCCL algorithm for this

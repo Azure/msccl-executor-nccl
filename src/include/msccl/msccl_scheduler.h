@@ -36,13 +36,14 @@ struct mscclSchedulerParam {
   int nRanks;
   bool scheduled;
   mscclAlgoHandle_t handle;
+  bool repair;
 };
 
 typedef struct {
   // Name of the scheduler (mainly for logs)
   const char* name;
   // Load all algorithms
-  ncclResult_t (*init)();
+  ncclResult_t (*init)(ncclComm_t comm);
   // Select an algorithm
   ncclResult_t (*selectAlgo)(struct mscclSchedulerParam* param);
   // Unload all algorithms

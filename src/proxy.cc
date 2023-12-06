@@ -8,6 +8,7 @@
 #include "comm.h"
 #include "info.h"
 #include "collectives.h"
+#include "bootstrap.h"
 #include "socket.h"
 #include "shm.h"
 #include "profiler.h"
@@ -860,6 +861,7 @@ void* ncclProxyProgress(void *proxyState_) {
     ncclResult_t ret = progressOps(proxyState, state, state->active, &idle);
     if (ret != ncclSuccess) {
       INFO(NCCL_ALL,"%s:%d -> %d [Proxy Thread]", __FILE__, __LINE__, ret);
+      //*proxyState->abortFlag = 1;
       return NULL;
     }
     if (lastIdle == 0 && idle == 1) ncclProfilingRecord(&profArgs, 0, 0, ncclProxyProfileIdle);
@@ -1102,6 +1104,8 @@ ncclResult_t ncclProxyCallAsync(struct ncclComm* comm, struct ncclProxyConnector
   struct ncclSocket* sock;
   ncclResult_t ret = ncclSuccess;
   struct ncclProxyState* sharedProxyState = comm->proxyState;
+  
+  WARN("ncclProxyCallAsync() called");
 
   if (sharedProxyState->peerSocks == NULL) return ncclInternalError;
 
@@ -1383,7 +1387,7 @@ static ncclResult_t proxyServiceInitOp(int type, struct ncclProxyLocalPeer* peer
 }
 
 #include <poll.h>
-
+extern int nicfailure;
 static bool proxyMatchOpType(int type) {
   switch (type) {
     case ncclProxyMsgInit:
@@ -1430,11 +1434,27 @@ void* ncclProxyService(void* _args) {
   int npeers = 0;
   int stop = 0;
   int asyncOpCount = 0;
+  int nloopcount = 0;
   while (stop == 0 || (stop == 1 && npeers > 0)) {
     /* Even if local comm aborts, we cannot let proxy thread exit if we still have peer
      * connections. Need to wait until all other related comms call abort and safely exit
      * together, or we could face segmentation fault. */
-    if (*proxyState->abortFlag != 0) stop = 1;
+    nloopcount++;
+    // if (nicfailure)
+    // {
+    //   *proxyState->abortFlag = 1;
+    //   WARN("[Proxy Service] detected nic failure, change abort flag to 1");
+    // }
+    // else
+    // {
+    //   WARN("[Proxy Service] not able to detected the nic failure");
+    // }
+    WARN("[Proxy Service] still in service loop %d", nloopcount);
+    if (*proxyState->abortFlag != 0) 
+    {
+      stop = 1;
+      WARN("[Proxy Service] Received abort flag!");
+    }
     /* never let proxy service thread blocks in poll, or it cannot receive abortFlag. */
     int ret;
     do {
@@ -1538,6 +1558,7 @@ void* ncclProxyService(void* _args) {
   }
 
   // Wait for all operations to complete and stop progress thread before freeing any resource
+  WARN("[Proxy Service] will destory soon!");
   if (ncclProxyProgressDestroy(proxyState) != ncclSuccess) {
     WARN("[Proxy Service] proxyDestroy failed");
   }
@@ -1548,6 +1569,47 @@ void* ncclProxyService(void* _args) {
   ncclSocketClose(proxyState->listenSock);
   free(proxyState->listenSock);
   proxyOpsFree(proxyState);
+  return NULL;
+}
+
+void* ncclProxyServiceDaemon(void* _args) {
+  ncclComm *comm = (ncclComm*)_args;
+  WARN("[Proxy Service] start the ncclProxyServiceDaemon now, ranks:%d, rank:%d", comm->nRanks, comm->rank);
+  int* status = NULL;
+  status = new int[comm->nRanks];
+  for (int i = 0; i < comm->nRanks; ++i) {
+    status[i] = 0;
+  }
+
+  while(1)
+  { 
+      status[comm->rank] = nicfailure;
+      if (nicfailure)
+      {
+        WARN("[Proxy Service] ncclProxyServiceDaemon, rank: %d detect the nic failure, will start to use allgather to notify others: %d", comm->rank, nicfailure);
+      }
+      bootstrapAllGather(comm->bootstrap, status, sizeof(int));
+      int all_status = 0;
+      for (int i = 0; i < comm->nRanks; ++i) {
+        all_status |= status[i];
+      }
+
+      WARN("[Proxy Service] ncclProxyServiceDaemon, finished allgather, all_status: %d", all_status);
+        
+      if (all_status != 0)
+      {
+        WARN("[Proxy Service] ncclProxyServiceDaemon, detect the nic failure, will step the proxy service now");
+        *comm->abortFlag=1;
+        ncclProxyStop(comm);
+        break;
+      }
+      else
+      {
+        WARN("[Proxy Service] ncclProxyServiceDaemon, not detect the nic failure, will check it again later");
+        sleep(5);
+      }
+  }
+  WARN("[Proxy Service] will quit the ncclProxyServiceDaemon now");
   return NULL;
 }
 
@@ -1581,8 +1643,10 @@ ncclResult_t ncclProxyCreate(struct ncclComm* comm) {
     proxyState->ncclCollNet = comm->ncclCollNet;
     memcpy(proxyState->buffSizes, comm->buffSizes, sizeof(comm->buffSizes));
 
+    pthread_t thread; 
     pthread_create(&comm->proxyState->thread, NULL, ncclProxyService, comm->proxyState);
     ncclSetThreadName(comm->proxyState->thread, "NCCL Service %2d", comm->cudaDev);
+    pthread_create(&thread, NULL, ncclProxyServiceDaemon, comm);
   }
   return ncclSuccess;
 }
