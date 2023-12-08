@@ -415,7 +415,7 @@ ncclResult_t mscclEnqueueCheck(
     void* recvBuff, const size_t recvCounts[], const size_t rDisPls[],
     size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
     mscclFunc_t func, ncclComm_t comm, cudaStream_t stream) {
-  INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck mscclNoGroup");
+  INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck mscclNoGroup com abort flag: %d, nic failure check: %d", *comm->abortFlag, nicfailure);
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   bool repair = false;
 
@@ -434,7 +434,6 @@ ncclResult_t mscclEnqueueCheck(
   switch (threadLocalStatus.groupStatus) {
     case mscclNoGroup:
       if (comm->mscclCompatible) {  
-          INFO(NCCL_INIT, "MSCCL: mscclEnqueueCheck mscclNoGroup, com abort flag: %d, nic failure check: %d", *comm->abortFlag, nicfailure);
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
             NCCLCHECK(mscclRunSavedParams());
@@ -445,7 +444,6 @@ ncclResult_t mscclEnqueueCheck(
       break;
     case mscclGroupSupportedOp:
       if (comm->mscclCompatible) {
-          INFO(NCCL_INIT, "MSCCL: mscclEnqueueCheck mscclGroupSupportedOp, com abort flag: %d, nic failure check: %d", *comm->abortFlag, nicfailure);
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
             // Only save counts and displs when there is suitable MSCCL algorithm for this

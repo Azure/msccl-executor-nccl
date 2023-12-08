@@ -29,4 +29,15 @@ ncclResult_t bootstrapIntraNodeAllGather(void* commState, int *ranks, int rank, 
 ncclResult_t bootstrapIntraNodeBroadcast(void* commState, int *ranks, int rank, int nranks, int root, void* bcastData, int size);
 ncclResult_t bootstrapClose(void* commState);
 ncclResult_t bootstrapAbort(void* commState);
+
+typedef struct {
+  // Name of the Bootstrap (mainly for logs)
+  const char* name;
+  // send operation
+  ncclResult_t (*send)(void* commState, int peer, int tag, void* data, int size);
+  // receive operation
+  ncclResult_t (*receive)(void* commState, int peer, int tag, void* data, int size);
+  // allgather operation
+  ncclResult_t (*allgather)(void* commState, void* allData, int size);
+} ncclBootstrapInterface;
 #endif
