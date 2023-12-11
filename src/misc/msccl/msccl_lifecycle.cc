@@ -26,7 +26,7 @@ NCCL_PARAM(MscclEnabled, "MSCCL_ENABLE", 1);
 static std::atomic<bool> mscclInitialized;
 static bool mscclSchedulerTriedLoadAlgo = false;
 static std::mutex mscclLifecycleMutex;
-extern int nicfailure;
+extern ncclNet_t ncclNetIb;
 
 int getEnvInt(const char* env, int64_t deftVal) {
   char* str = getenv(env);
@@ -330,6 +330,7 @@ static ncclResult_t mscclSetSavedSchedulerParam(
   param->p.rank = comm->rank;
   param->p.nRanks = comm->nRanks;
   param->p.repair = repair;
+  param->p.comm = comm;
   param->comm = comm;
   param->stream = stream;
   return ncclSuccess;
@@ -415,14 +416,21 @@ ncclResult_t mscclEnqueueCheck(
     void* recvBuff, const size_t recvCounts[], const size_t rDisPls[],
     size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
     mscclFunc_t func, ncclComm_t comm, cudaStream_t stream) {
-  INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck mscclNoGroup com abort flag: %d, nic failure check: %d", *comm->abortFlag, nicfailure);
+  int nicStat = 0;
+  ncclNetIb.getStatus(&nicStat);
+  INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck mscclNoGroup com abort flag: %d, nic failure: %d", *comm->abortFlag, nicStat);
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   bool repair = false;
 
   if (*comm->abortFlag)
   {
-    *comm->abortFlag=0;
-    repair = true;
+    int nicStat = 0;
+    ncclNetIb.getStatus(&nicStat);
+    if (nicStat)
+    {
+      *comm->abortFlag=0;
+      repair = true;
+    }
   }
 
   threadLocalStatus.savedSchedulerParams.push_back({});
@@ -458,6 +466,11 @@ ncclResult_t mscclEnqueueCheck(
       break;
     default:
       return ncclInvalidUsage;
+  }
+  if(repair)
+  {
+    repair = false;
+    ncclNetIb.setStatus(0);
   }
   return ncclSuccess;
 }

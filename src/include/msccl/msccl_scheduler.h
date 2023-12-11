@@ -37,6 +37,7 @@ struct mscclSchedulerParam {
   bool scheduled;
   mscclAlgoHandle_t handle;
   bool repair;
+  ncclComm_t comm;
 };
 
 typedef struct {

@@ -18,6 +18,8 @@
 #include <sys/syscall.h>
 #include <assert.h>
 
+extern ncclNet_t ncclNetIb;
+
 static bool NeedProxy(int type, int pattern, int root, struct ncclRing* ring, int nranks) {
   if (pattern == ncclPatternRing || pattern == ncclPatternRingTwice) return true;
 
@@ -1104,8 +1106,6 @@ ncclResult_t ncclProxyCallAsync(struct ncclComm* comm, struct ncclProxyConnector
   struct ncclSocket* sock;
   ncclResult_t ret = ncclSuccess;
   struct ncclProxyState* sharedProxyState = comm->proxyState;
-  
-  WARN("ncclProxyCallAsync() called");
 
   if (sharedProxyState->peerSocks == NULL) return ncclInternalError;
 
@@ -1434,27 +1434,11 @@ void* ncclProxyService(void* _args) {
   int npeers = 0;
   int stop = 0;
   int asyncOpCount = 0;
-  int nloopcount = 0;
   while (stop == 0 || (stop == 1 && npeers > 0)) {
     /* Even if local comm aborts, we cannot let proxy thread exit if we still have peer
      * connections. Need to wait until all other related comms call abort and safely exit
      * together, or we could face segmentation fault. */
-    nloopcount++;
-    // if (nicfailure)
-    // {
-    //   *proxyState->abortFlag = 1;
-    //   WARN("[Proxy Service] detected nic failure, change abort flag to 1");
-    // }
-    // else
-    // {
-    //   WARN("[Proxy Service] not able to detected the nic failure");
-    // }
-    WARN("[Proxy Service] still in service loop %d", nloopcount);
-    if (*proxyState->abortFlag != 0) 
-    {
-      stop = 1;
-      WARN("[Proxy Service] Received abort flag!");
-    }
+    if (*proxyState->abortFlag != 0) stop = 1;
     /* never let proxy service thread blocks in poll, or it cannot receive abortFlag. */
     int ret;
     do {
@@ -1558,7 +1542,6 @@ void* ncclProxyService(void* _args) {
   }
 
   // Wait for all operations to complete and stop progress thread before freeing any resource
-  WARN("[Proxy Service] will destory soon!");
   if (ncclProxyProgressDestroy(proxyState) != ncclSuccess) {
     WARN("[Proxy Service] proxyDestroy failed");
   }
@@ -1583,10 +1566,11 @@ void* ncclProxyServiceDaemon(void* _args) {
 
   while(1)
   { 
-      status[comm->rank] = nicfailure;
-      if (nicfailure)
+      int nicStat = 0;
+      status[comm->rank] = ncclNetIb.getStatus(&nicStat);
+      if (nicStat)
       {
-        WARN("[Proxy Service] ncclProxyServiceDaemon, rank: %d detect the nic failure, will start to use allgather to notify others: %d", comm->rank, nicfailure);
+        WARN("[Proxy Service] ncclProxyServiceDaemon, rank: %d detect the nic failure, will start to use allgather to notify others: %d", comm->rank, nicStat);
       }
       bootstrapAllGather(comm->bootstrap, status, sizeof(int));
       int all_status = 0;
@@ -1600,7 +1584,6 @@ void* ncclProxyServiceDaemon(void* _args) {
       {
         WARN("[Proxy Service] ncclProxyServiceDaemon, detect the nic failure, will step the proxy service now");
         *comm->abortFlag=1;
-        ncclProxyStop(comm);
         break;
       }
       else

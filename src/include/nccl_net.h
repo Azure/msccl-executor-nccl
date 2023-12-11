@@ -48,6 +48,10 @@ typedef struct {
   ncclResult_t (*devices)(int* ndev);
   // Get various device properties.
   ncclResult_t (*getProperties)(int dev, ncclNetProperties_v6_t* props);
+  // Get device status.
+  ncclResult_t (*getStatus)(int* nstat);
+  // Get various device properties.
+  ncclResult_t (*setStatus)(int nstat);
   // Create a receiving object and provide a handle to connect to it. The
   // handle can be up to NCCL_NET_HANDLE_MAXSIZE bytes and will be exchanged
   // between ranks to create a connection.

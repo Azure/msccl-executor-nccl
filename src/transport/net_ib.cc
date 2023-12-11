@@ -28,7 +28,7 @@
 #define MAXNAMESIZE 64
 static char ncclIbIfName[MAX_IF_NAME_SIZE+1];
 static union ncclSocketAddress ncclIbIfAddr;
-int nicfailure = 0;
+int nicStatus = 0;
 
 struct ncclIbMr {
   uintptr_t addr;
@@ -96,8 +96,8 @@ static void* ncclIbAsyncThreadMain(void* args) {
     {
       WARN("NET/IB : Got async event : %s, event type: %d", str, event.event_type);
       if (strcmp(str, "local catastrophic error") == 0) {
-        WARN("NET/IB : Detect Nic failure, will repaire soon, event type: %d", event.event_type);
-        nicfailure = 1;
+        WARN("NET/IB : Detect Nic failure, will repair soon, event type: %d", event.event_type);
+        nicStatus = 1;
         break;
       }
     }
@@ -341,6 +341,16 @@ ncclResult_t ncclIbGetProperties(int dev, ncclNetProperties_t* props) {
   props->port = ncclIbDevs[dev].port + ncclIbDevs[dev].realPort;
   props->maxComms = ncclIbDevs[dev].maxQp;
   props->maxRecvs = NCCL_NET_IB_MAX_RECVS;
+  return ncclSuccess;
+}
+
+ncclResult_t ncclIbGetStatus(int* nstat) {
+  *nstat = nicStatus;
+  return ncclSuccess;
+}
+
+ncclResult_t ncclIbSetStatus(int nstat) {
+  nicStatus = nstat;
   return ncclSuccess;
 }
 
@@ -1376,6 +1386,8 @@ ncclNet_t ncclNetIb = {
   ncclIbInit,
   ncclIbDevices,
   ncclIbGetProperties,
+  ncclIbGetStatus,
+  ncclIbSetStatus,
   ncclIbListen,
   ncclIbConnect,
   ncclIbAccept,
