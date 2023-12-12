@@ -1567,12 +1567,13 @@ void* ncclProxyServiceDaemon(void* _args) {
   while(1)
   { 
       int nicStat = 0;
-      status[comm->rank] = ncclNetIb.getStatus(&nicStat);
+      ncclNetIb.getStatus(&nicStat);
+      status[comm->rank] = nicStat;
       if (nicStat)
       {
         WARN("[Proxy Service] ncclProxyServiceDaemon, rank: %d detect the nic failure, will start to use allgather to notify others: %d", comm->rank, nicStat);
       }
-      bootstrapAllGather(comm->bootstrap, status, sizeof(int));
+      bootstrapAllGather(comm->bootstrap, status, sizeof(int) * comm->nRanks);
       int all_status = 0;
       for (int i = 0; i < comm->nRanks; ++i) {
         all_status |= status[i];
