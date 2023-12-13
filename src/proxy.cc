@@ -14,11 +14,15 @@
 #include "profiler.h"
 #define ENABLE_TIMER 0
 #include "timer.h"
+#include "param.h"
 
 #include <sys/syscall.h>
 #include <assert.h>
 
 extern ncclNet_t ncclNetIb;
+static bool resilientDaemonRunning = false;
+NCCL_PARAM(ResilientEnabled, "RESILIENT_ENABLED", 0);
+NCCL_PARAM(ResilientCheckInterval, "RESILIENT_CHECK_INTERVAL", 5);
 
 static bool NeedProxy(int type, int pattern, int root, struct ncclRing* ring, int nranks) {
   if (pattern == ncclPatternRing || pattern == ncclPatternRingTwice) return true;
@@ -1555,45 +1559,42 @@ void* ncclProxyService(void* _args) {
   return NULL;
 }
 
-void* ncclProxyServiceDaemon(void* _args) {
+void* ncclResilientDaemon(void* _args) {
   ncclComm *comm = (ncclComm*)_args;
-  WARN("[Proxy Service] start the ncclProxyServiceDaemon now, ranks:%d, rank:%d", comm->nRanks, comm->rank);
+  WARN("[Proxy Service] start the ncclResilientDaemon now, ranks:%d, rank:%d", comm->nRanks, comm->rank);
   int* status = NULL;
   status = new int[comm->nRanks];
   for (int i = 0; i < comm->nRanks; ++i) {
     status[i] = 0;
   }
+  int interval = ncclParamResilientCheckInterval();
 
-  while(1)
+  while(resilientDaemonRunning)
   { 
       int nicStat = 0;
       ncclNetIb.getStatus(&nicStat);
       status[comm->rank] = nicStat;
-      if (nicStat)
-      {
-        WARN("[Proxy Service] ncclProxyServiceDaemon, rank: %d detect the nic failure, will start to use allgather to notify others: %d", comm->rank, nicStat);
-      }
       bootstrapAllGather(comm->bootstrap, status, sizeof(int) * comm->nRanks);
       int all_status = 0;
       for (int i = 0; i < comm->nRanks; ++i) {
         all_status |= status[i];
       }
 
-      WARN("[Proxy Service] ncclProxyServiceDaemon, finished allgather, all_status: %d", all_status);
+      WARN("[Proxy Service] ncclResilientDaemon, finished allgather, all_status: %d", all_status);
         
-      if (all_status != 0)
+      if (0 != all_status && 0 == *comm->abortFlag)
       {
-        WARN("[Proxy Service] ncclProxyServiceDaemon, detect the nic failure, will step the proxy service now");
+        WARN("[Proxy Service] ncclResilientDaemon, detect the nic failure, will step the proxy service now");
         *comm->abortFlag=1;
-        break;
+        continue;
       }
       else
       {
-        WARN("[Proxy Service] ncclProxyServiceDaemon, not detect the nic failure, will check it again later");
-        sleep(5);
+        WARN("[Proxy Service] ncclResilientDaemon, not detect the nic failure, will check it again later");
+        sleep(interval);
       }
   }
-  WARN("[Proxy Service] will quit the ncclProxyServiceDaemon now");
+  WARN("[Proxy Service] will quit the ncclResilientDaemon now");
   return NULL;
 }
 
@@ -1627,10 +1628,14 @@ ncclResult_t ncclProxyCreate(struct ncclComm* comm) {
     proxyState->ncclCollNet = comm->ncclCollNet;
     memcpy(proxyState->buffSizes, comm->buffSizes, sizeof(comm->buffSizes));
 
-    pthread_t thread; 
     pthread_create(&comm->proxyState->thread, NULL, ncclProxyService, comm->proxyState);
     ncclSetThreadName(comm->proxyState->thread, "NCCL Service %2d", comm->cudaDev);
-    pthread_create(&thread, NULL, ncclProxyServiceDaemon, comm);
+
+    if (ncclParamResilientEnabled()){
+      pthread_t resilientDaemonthread; 
+      resilientDaemonRunning = true;
+      pthread_create(&resilientDaemonthread, NULL, ncclResilientDaemon, comm);
+    }
   }
   return ncclSuccess;
 }
@@ -1673,7 +1678,7 @@ ncclResult_t ncclProxyStop(struct ncclComm* comm) {
       }
     }
   }
-
+  resilientDaemonRunning = false;
   return ncclSuccess;
 }
 

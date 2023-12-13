@@ -7,8 +7,11 @@
 
 #include "enqueue.h"
 #include "collectives.h"
+#include "param.h"
 
 #include "msccl/msccl_lifecycle.h"
+
+extern int64_t ncclParamResilientEnabled();
 
 NCCL_API(ncclResult_t, ncclAllGather, const void* sendbuff, void* recvbuff, size_t sendcount,
     ncclDataType_t datatype, ncclComm_t comm, cudaStream_t stream);
@@ -21,14 +24,21 @@ ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t sendcoun
   size_t msgsize = sendcount * ncclTypeSize(datatype);
   NVTX3_FUNC_WITH_PARAMS(AllGather, AllGatherSchema, msgsize)
 
+  ncclResult_t ret;
   if (mscclAvailable() && !mscclIsCaller()) {
-    return mscclEnqueueCheck(
+    ret =  mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
       sendcount, datatype, 0, 0, ncclSum, mscclFuncAllGather, comm, stream);
   }
+  else{
+    struct ncclInfo info = { ncclFuncAllGather, "AllGather",
+      sendbuff, recvbuff, sendcount, datatype, ncclSum, 0, comm, stream, /* Args */
+      ALLGATHER_CHUNKSTEPS, ALLGATHER_SLICESTEPS };
+    ret = ncclEnqueueCheck(&info);
+  }
+  if (ncclParamResilientEnabled()){
+    cudaStreamSynchronize(stream);
+  }
 
-  struct ncclInfo info = { ncclFuncAllGather, "AllGather",
-    sendbuff, recvbuff, sendcount, datatype, ncclSum, 0, comm, stream, /* Args */
-    ALLGATHER_CHUNKSTEPS, ALLGATHER_SLICESTEPS };
-  return ncclEnqueueCheck(&info);
+  return ret;
 }

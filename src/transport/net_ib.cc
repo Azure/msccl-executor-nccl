@@ -28,7 +28,7 @@
 #define MAXNAMESIZE 64
 static char ncclIbIfName[MAX_IF_NAME_SIZE+1];
 static union ncclSocketAddress ncclIbIfAddr;
-int nicStatus = 0;
+static int nicStatus = 0;
 
 struct ncclIbMr {
   uintptr_t addr;

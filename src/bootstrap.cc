@@ -593,10 +593,3 @@ ncclResult_t bootstrapAbort(void* commState) {
   free(state);
   return ncclSuccess;
 }
-
-__attribute__((visibility("default"))) ncclBootstrapInterface ncclBootstrap = {
-  .name = NCCL_BOOTSTRAP_NAME,
-  .send = bootstrapSend,
-  .receive = bootstrapRecv,
-  .allgather = bootstrapAllGather,
-};

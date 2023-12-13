@@ -14,6 +14,7 @@
 #include <link.h>
 
 #include "alloc.h"
+#include "bootstrap.h"
 #include "checks.h"
 #include "graph/topo.h"
 
@@ -21,12 +22,17 @@
 #include "msccl/msccl_parser.h"
 #include "msccl/msccl_setup.h"
 #include "msccl/msccl_status.h"
+#include "msccl/msccl_scheduler.h"
 
 NCCL_PARAM(MscclEnabled, "MSCCL_ENABLE", 1);
 static std::atomic<bool> mscclInitialized;
 static bool mscclSchedulerTriedLoadAlgo = false;
 static std::mutex mscclLifecycleMutex;
+extern ncclResult_t bootstrapAllGather(void* commState, void* allData, int size);
+extern ncclResult_t bootstrapSend(void* commState, int peer, int tag, void* data, int size);
+extern ncclResult_t bootstrapRecv(void* commState, int peer, int tag, void* data, int size);
 extern ncclNet_t ncclNetIb;
+extern int64_t ncclParamResilientEnabled();
 
 int getEnvInt(const char* env, int64_t deftVal) {
   char* str = getenv(env);
@@ -56,6 +62,11 @@ bool mscclIsCaller() {
 
 bool mscclAvailable() {
   return mscclEnabled() && mscclInitialized.load(std::memory_order_acquire);
+}
+
+mscclSchedulerInitParam& mscclGetSchedulerInitParam() {
+  static mscclSchedulerInitParam initParam;
+  return initParam;
 }
 
 static bool mscclCommCompatible(ncclComm_t comm) {
@@ -155,7 +166,7 @@ static ncclResult_t mscclInternalSchedulerInit() {
   return ncclSuccess;
 }
 
-static ncclResult_t mscclSchedulerInit(ncclComm_t comm) {
+static ncclResult_t mscclSchedulerInit(mscclSchedulerInitParam *initParam) {
   mscclStatus& status = mscclGetStatus();
   bool useInternalScheduler = false;
 
@@ -178,7 +189,7 @@ static ncclResult_t mscclSchedulerInit(ncclComm_t comm) {
   if (useInternalScheduler) {
     NCCLCHECK(mscclInternalSchedulerInit());
   } else {
-    NCCLCHECK(status.mscclSchedulerPtr->init(comm));
+    NCCLCHECK(status.mscclSchedulerPtr->init(initParam));
   }
   return ncclSuccess;
 }
@@ -218,7 +229,16 @@ ncclResult_t mscclInit(ncclComm_t comm) {
     status.needsProxy = false;
     mscclSchedulerTriedLoadAlgo = false;
 
-    NCCLCHECK(mscclSchedulerInit(comm));
+    mscclSchedulerInitParam initParam = mscclGetSchedulerInitParam();
+    initParam.nRanks = comm->nRanks;
+    initParam.rank = comm->rank;
+    initParam.nNodes = comm->nNodes;
+    initParam.bootstrap = comm->bootstrap;
+    initParam.send = bootstrapSend;
+    initParam.receive = bootstrapRecv;
+    initParam.allgather = bootstrapAllGather; 
+
+    NCCLCHECK(mscclSchedulerInit(&initParam));
 
     mscclInitialized.store(true, std::memory_order_release);
   }
@@ -422,7 +442,7 @@ ncclResult_t mscclEnqueueCheck(
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   bool repair = false;
 
-  if (*comm->abortFlag)
+  if (ncclParamResilientEnabled() && *comm->abortFlag)
   {
     int nicStat = 0;
     ncclNetIb.getStatus(&nicStat);

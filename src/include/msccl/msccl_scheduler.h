@@ -44,11 +44,24 @@ typedef struct {
   // Name of the scheduler (mainly for logs)
   const char* name;
   // Load all algorithms
-  ncclResult_t (*init)(ncclComm_t comm);
+  ncclResult_t (*init)(struct mscclSchedulerInitParam *initParam);
   // Select an algorithm
   ncclResult_t (*selectAlgo)(struct mscclSchedulerParam* param);
   // Unload all algorithms
   ncclResult_t (*teardown)();
 } mscclSchedulerInterface;
+
+struct mscclSchedulerInitParam{
+  int rank;
+  int nRanks;
+  int nNodes;
+  void* bootstrap;
+  // bootstrap send operation
+  ncclResult_t (*send)(void* commState, int peer, int tag, void* data, int size);
+  // bootstrap receive operation
+  ncclResult_t (*receive)(void* commState, int peer, int tag, void* data, int size);
+  // bootstrap allgather operation
+  ncclResult_t (*allgather)(void* commState, void* allData, int size);
+};
 
 #endif
