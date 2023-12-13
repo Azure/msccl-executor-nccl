@@ -11,8 +11,6 @@
 #include "npkit/npkit.h"
 #endif
 
-#include <stdio.h>
-
 #define NCCL_LL128_FLAGTHREAD (NCCL_LL128_LINEELEMS-1)
 
 template<typename T, typename RedOp, typename Fan, int Direct, int P2p>
@@ -81,7 +79,6 @@ private:
   inline __device__ int checkAbort(int &spins, int i, int send) {
     spins++;
     if (abort == 0 && spins == NCCL_SPINS_BEFORE_CHECK_ABORT) {
-      printf("checkAbort LL128, abortFlag:%u \n", *ncclShmem.comm.abortFlag);
       abort = *ncclShmem.comm.abortFlag;
       spins = 0;
     }

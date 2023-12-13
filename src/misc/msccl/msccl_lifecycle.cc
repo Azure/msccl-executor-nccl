@@ -350,7 +350,6 @@ static ncclResult_t mscclSetSavedSchedulerParam(
   param->p.rank = comm->rank;
   param->p.nRanks = comm->nRanks;
   param->p.repair = repair;
-  param->p.comm = comm;
   param->comm = comm;
   param->stream = stream;
   return ncclSuccess;

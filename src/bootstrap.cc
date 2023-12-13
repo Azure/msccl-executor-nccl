@@ -13,8 +13,6 @@
 #include <sys/types.h>
 #include "proxy.h"
 
-#define NCCL_BOOTSTRAP_NAME "github.com/Azure/msccl-executor/bootstrap"
-
 struct bootstrapRootArgs {
   struct ncclSocket* listenSock;
   uint64_t magic;

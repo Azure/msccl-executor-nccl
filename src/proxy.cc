@@ -867,7 +867,6 @@ void* ncclProxyProgress(void *proxyState_) {
     ncclResult_t ret = progressOps(proxyState, state, state->active, &idle);
     if (ret != ncclSuccess) {
       INFO(NCCL_ALL,"%s:%d -> %d [Proxy Thread]", __FILE__, __LINE__, ret);
-      //*proxyState->abortFlag = 1;
       return NULL;
     }
     if (lastIdle == 0 && idle == 1) ncclProfilingRecord(&profArgs, 0, 0, ncclProxyProfileIdle);
@@ -1391,7 +1390,6 @@ static ncclResult_t proxyServiceInitOp(int type, struct ncclProxyLocalPeer* peer
 }
 
 #include <poll.h>
-extern int nicfailure;
 static bool proxyMatchOpType(int type) {
   switch (type) {
     case ncclProxyMsgInit:

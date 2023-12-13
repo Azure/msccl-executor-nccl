@@ -8,8 +8,6 @@
 #include "npkit/npkit.h"
 #endif
 
-#include <stdio.h>
-
 template<typename T, typename RedOp, typename Fan, int Direct, int P2p>
 class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
   public PrimitivesWithoutDirect<Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>> {
@@ -77,7 +75,6 @@ private:
   inline __device__ int checkAbort(int &spins, int send) {
     spins++;
     if (abort == 0 && spins == NCCL_SPINS_BEFORE_CHECK_ABORT) {
-      printf("checkAbort LL, abortFlag:%u \n", *ncclShmem.comm.abortFlag);
       abort = *ncclShmem.comm.abortFlag;
       spins = 0;
     }

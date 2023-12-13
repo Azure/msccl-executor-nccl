@@ -10,8 +10,6 @@
 
 #include "msccl/msccl_struct.h"
 
-// NCCL_PARAM(ResilientEnabled, "RESILIENT_ENABLED", 0);
-
 bool mscclEnabled();
 
 void mscclSetIsCallerFlag();
