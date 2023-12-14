@@ -37,6 +37,10 @@ struct mscclSchedulerParam {
   bool scheduled;
   mscclAlgoHandle_t handle;
   bool repair;
+  void* bootstrap;
+  ncclResult_t (*send)(void* commState, int peer, int tag, void* data, int size);
+  ncclResult_t (*receive)(void* commState, int peer, int tag, void* data, int size);
+  ncclResult_t (*allgather)(void* commState, void* allData, int size);
 };
 
 typedef struct {

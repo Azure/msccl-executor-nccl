@@ -1559,7 +1559,7 @@ void* ncclProxyService(void* _args) {
 
 void* ncclResilientDaemon(void* _args) {
   ncclComm *comm = (ncclComm*)_args;
-  WARN("[Proxy Service] start the ncclResilientDaemon now, ranks:%d, rank:%d", comm->nRanks, comm->rank);
+  INFO(NCCL_INIT, "[Proxy Service] start the ncclResilientDaemon now, ranks:%d, rank:%d", comm->nRanks, comm->rank);
   int* status = NULL;
   status = new int[comm->nRanks];
   for (int i = 0; i < comm->nRanks; ++i) {
@@ -1578,21 +1578,21 @@ void* ncclResilientDaemon(void* _args) {
         all_status |= status[i];
       }
 
-      WARN("[Proxy Service] ncclResilientDaemon, finished allgather, all_status: %d", all_status);
+      INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, finished allgather, all_status: %d", all_status);
         
       if (0 != all_status && 0 == *comm->abortFlag)
       {
-        WARN("[Proxy Service] ncclResilientDaemon, detect the nic failure, will step the proxy service now");
+        INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, detect the nic failure, will stop the proxy service now");
         *comm->abortFlag=1;
         continue;
       }
       else
       {
-        WARN("[Proxy Service] ncclResilientDaemon, not detect the nic failure, will check it again later");
+        INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, not detect the nic failure, will check it again later");
         sleep(interval);
       }
   }
-  WARN("[Proxy Service] will quit the ncclResilientDaemon now");
+  INFO(NCCL_INIT, "[Proxy Service] will quit the ncclResilientDaemon now");
   return NULL;
 }
 

@@ -234,9 +234,9 @@ ncclResult_t mscclInit(ncclComm_t comm) {
     initParam.rank = comm->rank;
     initParam.nNodes = comm->nNodes;
     initParam.bootstrap = comm->bootstrap;
-    initParam.send = bootstrapSend;
-    initParam.receive = bootstrapRecv;
-    initParam.allgather = bootstrapAllGather; 
+    initParam.send = &bootstrapSend;
+    initParam.receive = &bootstrapRecv;
+    initParam.allgather = &bootstrapAllGather; 
 
     NCCLCHECK(mscclSchedulerInit(&initParam));
 
@@ -333,7 +333,10 @@ static ncclResult_t mscclSetSavedSchedulerParam(
   const void* sendBuff, const size_t sendCounts[], const size_t sDisPls[],
   void* recvBuff, const size_t recvCounts[], const size_t rDisPls[],
   size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
-  mscclFunc_t func, ncclComm_t comm, cudaStream_t stream, bool repair,
+  mscclFunc_t func, ncclComm_t comm, cudaStream_t stream, bool repair,  
+  ncclResult_t (*send)(void* commState, int peer, int tag, void* data, int size),
+  ncclResult_t (*receive)(void* commState, int peer, int tag, void* data, int size),
+  ncclResult_t (*allgather)(void* commState, void* allData, int size),
   struct mscclSavedSchedulerParam* param) {
   param->p.sendBuff = sendBuff;
   param->p.sendCounts = sendCounts;
@@ -350,6 +353,10 @@ static ncclResult_t mscclSetSavedSchedulerParam(
   param->p.rank = comm->rank;
   param->p.nRanks = comm->nRanks;
   param->p.repair = repair;
+  param->p.bootstrap = comm->bootstrap;
+  param->p.send = send;
+  param->p.receive = receive;
+  param->p.allgather = allgather; 
   param->comm = comm;
   param->stream = stream;
   return ncclSuccess;
@@ -455,12 +462,12 @@ ncclResult_t mscclEnqueueCheck(
   threadLocalStatus.savedSchedulerParams.push_back({});
   NCCLCHECK(mscclSetSavedSchedulerParam(
     sendBuff, sendCounts, sDisPls, recvBuff, recvCounts, rDisPls,
-    count, dataType, root, peer, op, func, comm, stream, repair,
+    count, dataType, root, peer, op, func, comm, stream, repair, &bootstrapSend, &bootstrapRecv, &bootstrapAllGather, 
     &threadLocalStatus.savedSchedulerParams.back()));
 
   switch (threadLocalStatus.groupStatus) {
     case mscclNoGroup:
-      if (comm->mscclCompatible) {  
+      if (comm->mscclCompatible) {
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
             NCCLCHECK(mscclRunSavedParams());
