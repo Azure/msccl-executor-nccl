@@ -454,7 +454,7 @@ ncclResult_t mscclEnqueueCheck(
     ncclNetIb.getStatus(&nicStat);
     if (nicStat)
     {
-      *comm->abortFlag=0;
+      *comm->abortFlag = 0;
       repair = true;
     }
   }
