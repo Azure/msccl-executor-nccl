@@ -1568,12 +1568,12 @@ void* ncclResilientDaemon(void* _args) {
   while(resilientDaemonRunning)
   { 
       int nicStat = 0;
-      memset(status, 0, comm->nRanks * sizeof(status));
+      memset(status, 0, comm->nRanks * sizeof(int));
 
       ncclNetIb.getStatus(&nicStat);
       status[comm->rank] = nicStat;
       INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, rank %d nic status: %d", comm->rank, nicStat);
-      bootstrapAllGather(comm->bootstrap, status, sizeof(int));
+      bootstrapAllGather(comm->bootstrap, status, comm->nRanks * sizeof(int));
       int all_status = 0;
       for (int i = 0; i < comm->nRanks; ++i) {
         INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, finished allgather, status:%d %d", i, status[i]);

@@ -456,6 +456,8 @@ ncclResult_t mscclEnqueueCheck(
     {
       *comm->abortFlag = 0;
       repair = true;
+      ncclNetIb.setStatus(0);
+      INFO(NCCL_INIT, "MSCCL: Reset nic status to 0 for rank: %d", comm->rank);
     }
   }
 
@@ -496,7 +498,6 @@ ncclResult_t mscclEnqueueCheck(
   if(repair)
   {
     repair = false;
-    ncclNetIb.setStatus(0);
   }
   return ncclSuccess;
 }
