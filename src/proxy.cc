@@ -1573,7 +1573,7 @@ void* ncclResilientDaemon(void* _args) {
       ncclNetIb.getStatus(&nicStat);
       status[comm->rank] = nicStat;
       INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, rank %d nic status: %d", comm->rank, nicStat);
-      bootstrapAllGather(comm->bootstrap, status, sizeof(int) * comm->nRanks);
+      bootstrapAllGather(comm->bootstrap, status, sizeof(int));
       int all_status = 0;
       for (int i = 0; i < comm->nRanks; ++i) {
         INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, finished allgather, status:%d %d", i, status[i]);
