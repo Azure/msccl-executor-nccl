@@ -1560,16 +1560,16 @@ void* ncclProxyService(void* _args) {
 void* ncclResilientDaemon(void* _args) {
   ncclComm *comm = (ncclComm*)_args;
   INFO(NCCL_INIT, "[Proxy Service] start the ncclResilientDaemon now, ranks:%d, rank:%d", comm->nRanks, comm->rank);
-  int* status = NULL;
-  status = new int[comm->nRanks];
-  for (int i = 0; i < comm->nRanks; ++i) {
-    status[i] = 0;
-  }
   int interval = ncclParamResilientCheckInterval();
-
+  int *status = (int*)malloc(comm->nRanks * sizeof(int));
+  if (status == NULL) {
+    WARN("[Proxy Service] ncclResilientDaemon, memory allocation failed, ncclResilientDaemon will quit soon");
+  }
   while(resilientDaemonRunning)
   { 
       int nicStat = 0;
+      memset(status, 0, comm->nRanks * sizeof(status));
+
       ncclNetIb.getStatus(&nicStat);
       status[comm->rank] = nicStat;
       INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, rank %d nic status: %d", comm->rank, nicStat);
@@ -1594,6 +1594,8 @@ void* ncclResilientDaemon(void* _args) {
         sleep(interval);
       }
   }
+  free(status); 
+
   INFO(NCCL_INIT, "[Proxy Service] will quit the ncclResilientDaemon now");
   return NULL;
 }
