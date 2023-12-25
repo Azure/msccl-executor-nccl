@@ -113,8 +113,8 @@ private:
   inline __device__ bool checkAbort(int &spins) {
     spins++;
     if (!(flags & Aborted) && spins == NCCL_SPINS_BEFORE_CHECK_ABORT) {
-      printf("checkAbort Simple, abortFlag:%u \n", *ncclShmem.comm.abortFlag);
       if (*ncclShmem.comm.abortFlag) {
+        // printf("checkAbort Simple, abortFlag:%u \n", *ncclShmem.comm.abortFlag);
         flags |= Aborted;
         ncclShmem.aborted = 1;
       }

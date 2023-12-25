@@ -444,12 +444,12 @@ ncclResult_t mscclEnqueueCheck(
     mscclFunc_t func, ncclComm_t comm, cudaStream_t stream) {
   int nicStat = 0;
   ncclNetIb.getStatus(&nicStat);
-  INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck mscclNoGroup com abort flag: %d, nic failure: %d", *comm->abortFlag, nicStat);
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
   bool repair = false;
 
   if (ncclParamResilientEnabled() && *comm->abortFlag)
   {
+    INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck mscclNoGroup com abort flag: %d, nic failure: %d", *comm->abortFlag, nicStat);
     int nicStat = 0;
     ncclNetIb.getStatus(&nicStat);
     if (nicStat)

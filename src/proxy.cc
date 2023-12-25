@@ -1576,7 +1576,6 @@ void* ncclResilientDaemon(void* _args) {
       bootstrapAllGather(comm->bootstrap, status, comm->nRanks * sizeof(int));
       int all_status = 0;
       for (int i = 0; i < comm->nRanks; ++i) {
-        INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, finished allgather, status:%d %d", i, status[i]);
         all_status |= status[i];
       }
 
@@ -1584,7 +1583,7 @@ void* ncclResilientDaemon(void* _args) {
         
       if (0 != all_status && 0 == *comm->abortFlag)
       {
-        INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, detect the nic failure, will stop the proxy service now");
+        INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, detect the nic failure, will abort the kernel execution now");
         *comm->abortFlag=1;
         continue;
       }
