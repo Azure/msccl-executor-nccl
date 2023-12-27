@@ -347,6 +347,8 @@ struct ncclComm {
   int finalizeRankCnt;
   // Whether this comm is compatible with MSCCL
   bool mscclCompatible;
+  // Whether this comm is current in resilient repairing mode
+  bool resilientRepairing;
 };
 
 enum ncclLaunchMode {

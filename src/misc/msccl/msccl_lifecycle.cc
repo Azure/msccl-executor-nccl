@@ -33,6 +33,7 @@ extern ncclResult_t bootstrapSend(void* commState, int peer, int tag, void* data
 extern ncclResult_t bootstrapRecv(void* commState, int peer, int tag, void* data, int size);
 extern ncclNet_t ncclNetIb;
 extern int64_t ncclParamResilientEnabled();
+extern bool proxyResilientRepairingMode;
 
 int getEnvInt(const char* env, int64_t deftVal) {
   char* str = getenv(env);
@@ -442,29 +443,12 @@ ncclResult_t mscclEnqueueCheck(
     void* recvBuff, const size_t recvCounts[], const size_t rDisPls[],
     size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
     mscclFunc_t func, ncclComm_t comm, cudaStream_t stream) {
-  int nicStat = 0;
-  ncclNetIb.getStatus(&nicStat);
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
-  bool repair = false;
-
-  if (ncclParamResilientEnabled() && *comm->abortFlag)
-  {
-    INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck mscclNoGroup com abort flag: %d, nic failure: %d", *comm->abortFlag, nicStat);
-    int nicStat = 0;
-    ncclNetIb.getStatus(&nicStat);
-    if (nicStat)
-    {
-      *comm->abortFlag = 0;
-      repair = true;
-      ncclNetIb.setStatus(0);
-      INFO(NCCL_INIT, "MSCCL: Reset nic status to 0 for rank: %d", comm->rank);
-    }
-  }
 
   threadLocalStatus.savedSchedulerParams.push_back({});
   NCCLCHECK(mscclSetSavedSchedulerParam(
     sendBuff, sendCounts, sDisPls, recvBuff, recvCounts, rDisPls,
-    count, dataType, root, peer, op, func, comm, stream, repair, &bootstrapSend, &bootstrapRecv, &bootstrapAllGather, 
+    count, dataType, root, peer, op, func, comm, stream, comm->resilientRepairing, &bootstrapSend, &bootstrapRecv, &bootstrapAllGather, 
     &threadLocalStatus.savedSchedulerParams.back()));
 
   switch (threadLocalStatus.groupStatus) {
@@ -472,6 +456,15 @@ ncclResult_t mscclEnqueueCheck(
       if (comm->mscclCompatible) {
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
+            if(ncclParamResilientEnabled() && comm->resilientRepairing)
+            {
+              INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck and in resilient repairing mode now");
+              comm->resilientRepairing = false;
+              proxyResilientRepairingMode = false;
+              *comm->abortFlag = 0;
+              ncclNetIb.setStatus(0);
+            }
+            INFO(NCCL_INIT, "MSCCL: mscclRunSavedParams for rank: %d", comm->rank);
             NCCLCHECK(mscclRunSavedParams());
             break;
           }
@@ -482,6 +475,14 @@ ncclResult_t mscclEnqueueCheck(
       if (comm->mscclCompatible) {
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
+            if(ncclParamResilientEnabled() && comm->resilientRepairing)
+            {
+              INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck and in resilient repairing mode now");
+              comm->resilientRepairing = false;
+              proxyResilientRepairingMode = false;
+              *comm->abortFlag = 0;
+              ncclNetIb.setStatus(0);
+            }
             // Only save counts and displs when there is suitable MSCCL algorithm for this
             NCCLCHECK(mscclSaveCountsAndDispls(&threadLocalStatus.savedSchedulerParams.back()));
             break;
@@ -494,10 +495,6 @@ ncclResult_t mscclEnqueueCheck(
       break;
     default:
       return ncclInvalidUsage;
-  }
-  if(repair)
-  {
-    repair = false;
   }
   return ncclSuccess;
 }

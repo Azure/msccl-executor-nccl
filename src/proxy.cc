@@ -21,6 +21,7 @@
 
 extern ncclNet_t ncclNetIb;
 static bool resilientDaemonRunning = false;
+static bool proxyResilientRepairingMode = false;
 NCCL_PARAM(ResilientEnabled, "RESILIENT_ENABLED", 0);
 NCCL_PARAM(ResilientCheckInterval, "RESILIENT_CHECK_INTERVAL", 5);
 
@@ -687,7 +688,13 @@ static ncclResult_t progressOps(struct ncclProxyState* proxyState, struct ncclPr
   while (op) {
     if (op->state == ncclProxyOpNone) return ncclInternalError;
     TIME_START(0); TIME_START(1);
-    NCCLCHECK(op->progress(proxyState, op));
+    if (proxyResilientRepairingMode)
+    {
+      // if in resilient repairing state, we need to clean up all the ops from the proxy
+      op->state = ncclProxyOpNone;
+    }else{
+      NCCLCHECK(op->progress(proxyState, op));
+    }
     if (op->idle) { TIME_STOP(1); TIME_CANCEL(0); } else { TIME_CANCEL(1); TIME_STOP(0); }
     *idle &= op->idle;
     if (op->state == ncclProxyOpNone) {
@@ -887,6 +894,7 @@ void* ncclProxyProgress(void *proxyState_) {
     }
     lastIdle = idle;
   }
+  INFO(NCCL_ALL,"[Proxy Thread] ncclProxyProgress exit");
   return NULL;
 }
 
@@ -1440,7 +1448,10 @@ void* ncclProxyService(void* _args) {
     /* Even if local comm aborts, we cannot let proxy thread exit if we still have peer
      * connections. Need to wait until all other related comms call abort and safely exit
      * together, or we could face segmentation fault. */
-    if (*proxyState->abortFlag != 0) stop = 1;
+    if (*proxyState->abortFlag != 0) {
+      INFO(NCCL_INIT|NCCL_NET,"ncclProxyService: receive the abortFlag signal now \n");
+      stop = 1;
+    }
     /* never let proxy service thread blocks in poll, or it cannot receive abortFlag. */
     int ret;
     do {
@@ -1567,31 +1578,30 @@ void* ncclResilientDaemon(void* _args) {
   }
   while(resilientDaemonRunning)
   { 
+    if (!comm->resilientRepairing)
+    {
       int nicStat = 0;
       memset(status, 0, comm->nRanks * sizeof(int));
 
       ncclNetIb.getStatus(&nicStat);
       status[comm->rank] = nicStat;
-      INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, rank %d nic status: %d", comm->rank, nicStat);
+      
       bootstrapAllGather(comm->bootstrap, status, comm->nRanks * sizeof(int));
       int all_status = 0;
       for (int i = 0; i < comm->nRanks; ++i) {
         all_status |= status[i];
       }
-
-      INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, finished allgather, all_status: %d", all_status);
         
-      if (0 != all_status && 0 == *comm->abortFlag)
+      if (0 != all_status)
       {
         INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, detect the nic failure, will abort the kernel execution now");
-        *comm->abortFlag=1;
+        comm->resilientRepairing = true;
+        *comm->abortFlag = 1;
+        proxyResilientRepairingMode = true;
         continue;
       }
-      else
-      {
-        INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, not detect the nic failure, will check it again later");
-        sleep(interval);
-      }
+    }
+    sleep(interval);
   }
   free(status); 
 
