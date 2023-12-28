@@ -33,7 +33,6 @@ extern ncclResult_t bootstrapSend(void* commState, int peer, int tag, void* data
 extern ncclResult_t bootstrapRecv(void* commState, int peer, int tag, void* data, int size);
 extern ncclNet_t ncclNetIb;
 extern int64_t ncclParamResilientEnabled();
-extern bool proxyResilientRepairingMode;
 
 int getEnvInt(const char* env, int64_t deftVal) {
   char* str = getenv(env);
@@ -448,7 +447,7 @@ ncclResult_t mscclEnqueueCheck(
   threadLocalStatus.savedSchedulerParams.push_back({});
   NCCLCHECK(mscclSetSavedSchedulerParam(
     sendBuff, sendCounts, sDisPls, recvBuff, recvCounts, rDisPls,
-    count, dataType, root, peer, op, func, comm, stream, comm->resilientRepairing, &bootstrapSend, &bootstrapRecv, &bootstrapAllGather, 
+    count, dataType, root, peer, op, func, comm, stream, *comm->resilientRepairing, &bootstrapSend, &bootstrapRecv, &bootstrapAllGather, 
     &threadLocalStatus.savedSchedulerParams.back()));
 
   switch (threadLocalStatus.groupStatus) {
@@ -459,9 +458,8 @@ ncclResult_t mscclEnqueueCheck(
             if(ncclParamResilientEnabled() && comm->resilientRepairing)
             {
               INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck and in resilient repairing mode now");
-              comm->resilientRepairing = false;
-              proxyResilientRepairingMode = false;
-              *comm->abortFlag = 0;
+              *comm->resilientRepairing = false;
+              // *comm->abortFlag = 0;
               ncclNetIb.setStatus(0);
             }
             INFO(NCCL_INIT, "MSCCL: mscclRunSavedParams for rank: %d", comm->rank);
@@ -478,9 +476,8 @@ ncclResult_t mscclEnqueueCheck(
             if(ncclParamResilientEnabled() && comm->resilientRepairing)
             {
               INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck and in resilient repairing mode now");
-              comm->resilientRepairing = false;
-              proxyResilientRepairingMode = false;
-              *comm->abortFlag = 0;
+              *comm->resilientRepairing = false;
+              // *comm->abortFlag = 0;
               ncclNetIb.setStatus(0);
             }
             // Only save counts and displs when there is suitable MSCCL algorithm for this

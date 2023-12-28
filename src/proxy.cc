@@ -21,7 +21,6 @@
 
 extern ncclNet_t ncclNetIb;
 static bool resilientDaemonRunning = false;
-static bool proxyResilientRepairingMode = false;
 NCCL_PARAM(ResilientEnabled, "RESILIENT_ENABLED", 0);
 NCCL_PARAM(ResilientCheckInterval, "RESILIENT_CHECK_INTERVAL", 5);
 
@@ -688,7 +687,7 @@ static ncclResult_t progressOps(struct ncclProxyState* proxyState, struct ncclPr
   while (op) {
     if (op->state == ncclProxyOpNone) return ncclInternalError;
     TIME_START(0); TIME_START(1);
-    if (proxyResilientRepairingMode)
+    if (*proxyState->resilientRepairing)
     {
       // if in resilient repairing state, we need to clean up all the ops from the proxy
       op->state = ncclProxyOpNone;
@@ -1595,9 +1594,8 @@ void* ncclResilientDaemon(void* _args) {
       if (0 != all_status)
       {
         INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, detect the nic failure, will abort the kernel execution now");
-        comm->resilientRepairing = true;
-        *comm->abortFlag = 1;
-        proxyResilientRepairingMode = true;
+        *comm->resilientRepairing = true;
+        // *comm->abortFlag = 1;
         continue;
       }
     }
@@ -1637,6 +1635,7 @@ ncclResult_t ncclProxyCreate(struct ncclComm* comm) {
     proxyState->dmaBufSupport = comm->dmaBufSupport;
     proxyState->ncclNet = comm->ncclNet;
     proxyState->ncclCollNet = comm->ncclCollNet;
+    proxyState->resilientRepairing = comm->resilientRepairing;
     memcpy(proxyState->buffSizes, comm->buffSizes, sizeof(comm->buffSizes));
 
     pthread_create(&comm->proxyState->thread, NULL, ncclProxyService, comm->proxyState);

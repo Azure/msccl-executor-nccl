@@ -228,6 +228,8 @@ struct ncclProxyState {
 
   // Queue of expected responses from the proxy
   struct ncclExpectedProxyResponse* expectedResponses;
+  // Whether this comm is current in resilient repairing mode
+  volatile bool *resilientRepairing;
 };
 
 enum proxyConnectState {

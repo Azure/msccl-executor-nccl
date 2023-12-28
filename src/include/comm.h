@@ -348,7 +348,7 @@ struct ncclComm {
   // Whether this comm is compatible with MSCCL
   bool mscclCompatible;
   // Whether this comm is current in resilient repairing mode
-  bool resilientRepairing;
+  volatile bool *resilientRepairing;
 };
 
 enum ncclLaunchMode {
