@@ -312,7 +312,8 @@ struct ncclDevComm {
   NpKitEventCollectContext* npKitEventCollectContexts;
   uint64_t* cpuTimestamp;
 #endif
-
+  // Whether this comm is current in resilient repairing mode
+  volatile bool *resilientRepairing;
 };
 
 struct alignas(16) ncclDevCommAndChannels {

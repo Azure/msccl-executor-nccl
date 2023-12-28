@@ -7,8 +7,11 @@
 
 #include "enqueue.h"
 #include "collectives.h"
+#include "param.h"
 
 #include "msccl/msccl_lifecycle.h"
+
+extern int64_t ncclParamResilientEnabled();
 
 NCCL_API(ncclResult_t, ncclBroadcast, const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
     ncclComm_t comm, cudaStream_t stream);
@@ -25,15 +28,23 @@ ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, n
   NvtxParamsBroadcast payload{count * ncclTypeSize(datatype), root};
   NVTX3_FUNC_WITH_PARAMS(Broadcast, BroadcastSchema, payload)
 
+  ncclResult_t ret;
   if (mscclAvailable() && !mscclIsCaller()) {
-    return mscclEnqueueCheck(
+    ret = mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
       count, datatype, root, 0, ncclSum, mscclFuncBroadcast, comm, stream);
   }
+  else{
   struct ncclInfo info = { ncclFuncBroadcast, "Broadcast",
     sendbuff, recvbuff, count, datatype, ncclSum, root, comm, stream, /* Args */
     BROADCAST_CHUNKSTEPS, BROADCAST_SLICESTEPS };
-  return ncclEnqueueCheck(&info);
+    ret = ncclEnqueueCheck(&info);
+  }
+  if (ncclParamResilientEnabled()){
+    cudaStreamSynchronize(stream);
+  }
+
+  return ret;
 }
 /* Deprecated original "in place" function, similar to MPI */
 NCCL_API(ncclResult_t, ncclBcast, void* buff, size_t count, ncclDataType_t datatype, int root,

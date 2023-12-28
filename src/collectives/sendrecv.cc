@@ -8,8 +8,11 @@
 #include "enqueue.h"
 #include "collectives.h"
 #include "argcheck.h" // Need some checks here since we access comm
+#include "param.h"
 
 #include "msccl/msccl_lifecycle.h"
+
+extern int64_t ncclParamResilientEnabled();
 
 struct NvtxParamsSendRecv {
     size_t bytes;
@@ -27,19 +30,24 @@ ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatyp
   NvtxParamsSendRecv payload{count * ncclTypeSize(datatype), peer};
   NVTX3_FUNC_WITH_PARAMS(Send, SendRecvSchema, payload)
 
+  ncclResult_t ret;
   if (mscclAvailable() && !mscclIsCaller()) {
-    return mscclEnqueueCheck(
+    ret = mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, nullptr, nullptr, nullptr,
       count, datatype, 0, peer, ncclSum, mscclFuncSend, comm, stream);
   }
-
-  struct ncclInfo info = { ncclFuncSend, "Send",
+  else{
+    struct ncclInfo info = { ncclFuncSend, "Send",
     NULL, (void*)sendbuff, count, datatype, ncclSum, peer, comm, stream, /* Args */
     1, 1 };
-  ncclResult_t ret;
-  NCCLCHECK(ncclGroupStart());
-  ret = ncclEnqueueCheck(&info);
-  NCCLCHECK(ncclGroupEnd());
+    NCCLCHECK(ncclGroupStart());
+    ret = ncclEnqueueCheck(&info);
+    NCCLCHECK(ncclGroupEnd());
+  }
+  if (ncclParamResilientEnabled()){
+    cudaStreamSynchronize(stream);
+  }
+
   return ret;
 }
 
@@ -50,18 +58,23 @@ ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype, int
   NvtxParamsSendRecv payload{count * ncclTypeSize(datatype), peer};
   NVTX3_FUNC_WITH_PARAMS(Recv, SendRecvSchema, payload)
 
+  ncclResult_t ret;
   if (mscclAvailable() && !mscclIsCaller()) {
-    return mscclEnqueueCheck(
+    ret = mscclEnqueueCheck(
       nullptr, nullptr, nullptr, recvbuff, nullptr, nullptr,
       count, datatype, 0, peer, ncclSum, mscclFuncRecv, comm, stream);
   }
-
-  struct ncclInfo info = { ncclFuncRecv, "Recv",
+  else{
+    struct ncclInfo info = { ncclFuncRecv, "Recv",
     NULL, recvbuff, count, datatype, ncclSum, peer, comm, stream, /* Args */
     1, 1 };
-  ncclResult_t ret;
-  NCCLCHECK(ncclGroupStart());
-  ret = ncclEnqueueCheck(&info);
-  NCCLCHECK(ncclGroupEnd());
+    NCCLCHECK(ncclGroupStart());
+    ret = ncclEnqueueCheck(&info);
+    NCCLCHECK(ncclGroupEnd());
+  }
+  if (ncclParamResilientEnabled()){
+    cudaStreamSynchronize(stream);
+  }
+  
   return ret;
 }

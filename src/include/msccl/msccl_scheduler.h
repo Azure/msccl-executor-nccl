@@ -36,17 +36,35 @@ struct mscclSchedulerParam {
   int nRanks;
   bool scheduled;
   mscclAlgoHandle_t handle;
+  bool repair;
+  void* bootstrap;
+  ncclResult_t (*send)(void* commState, int peer, int tag, void* data, int size);
+  ncclResult_t (*receive)(void* commState, int peer, int tag, void* data, int size);
+  ncclResult_t (*allgather)(void* commState, void* allData, int size);
 };
 
 typedef struct {
   // Name of the scheduler (mainly for logs)
   const char* name;
   // Load all algorithms
-  ncclResult_t (*init)();
+  ncclResult_t (*init)(struct mscclSchedulerInitParam *initParam);
   // Select an algorithm
   ncclResult_t (*selectAlgo)(struct mscclSchedulerParam* param);
   // Unload all algorithms
   ncclResult_t (*teardown)();
 } mscclSchedulerInterface;
+
+struct mscclSchedulerInitParam{
+  int rank;
+  int nRanks;
+  int nNodes;
+  void* bootstrap;
+  // bootstrap send operation
+  ncclResult_t (*send)(void* commState, int peer, int tag, void* data, int size);
+  // bootstrap receive operation
+  ncclResult_t (*receive)(void* commState, int peer, int tag, void* data, int size);
+  // bootstrap allgather operation
+  ncclResult_t (*allgather)(void* commState, void* allData, int size);
+};
 
 #endif

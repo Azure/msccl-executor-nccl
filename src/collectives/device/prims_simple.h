@@ -11,6 +11,8 @@
 #include "npkit/npkit.h"
 #endif
 
+#include <stdio.h>
+
 template<typename T, typename RedOp, typename Fan, int Direct,
          int SlicePerChunk, int StepPerSlice, int Unroll, int P2p, int MultimemSrcs, int MultimemDsts>
 class Primitives<
@@ -111,7 +113,8 @@ private:
   inline __device__ bool checkAbort(int &spins) {
     spins++;
     if (!(flags & Aborted) && spins == NCCL_SPINS_BEFORE_CHECK_ABORT) {
-      if (*ncclShmem.comm.abortFlag) {
+      if (*ncclShmem.comm.abortFlag || *ncclShmem.comm.resilientRepairing) {
+        printf("checkAbort Simple, abortFlag:%u \n", *ncclShmem.comm.abortFlag);
         flags |= Aborted;
         ncclShmem.aborted = 1;
       }

@@ -8,8 +8,11 @@
 #include "enqueue.h"
 #include "collectives.h"
 #include "nccl.h"
+#include "param.h"
 
 #include "msccl/msccl_lifecycle.h"
+
+extern int64_t ncclParamResilientEnabled();
 
 NCCL_API(ncclResult_t, ncclReduce, const void* sendbuff, void* recvbuff, size_t count,
     ncclDataType_t datatype, ncclRedOp_t op, int root, ncclComm_t comm, cudaStream_t stream);
@@ -29,14 +32,21 @@ ncclResult_t ncclReduce(const void* sendbuff, void* recvbuff, size_t count,
   NvtxParamsReduce payload{count * ncclTypeSize(datatype), root, op};
   NVTX3_FUNC_WITH_PARAMS(Reduce, ReduceSchema, payload)
 
+  ncclResult_t ret;
   if (mscclAvailable() && !mscclIsCaller()) {
-    return mscclEnqueueCheck(
+    ret = mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
       count, datatype, root, 0, op, mscclFuncReduce, comm, stream);
   }
-
-  struct ncclInfo info = { ncclFuncReduce, "Reduce",
+  else{
+    struct ncclInfo info = { ncclFuncReduce, "Reduce",
     sendbuff, recvbuff, count, datatype, op, root, comm, stream, /* Args */
     REDUCE_CHUNKSTEPS, REDUCE_SLICESTEPS };
-  return ncclEnqueueCheck(&info);
+    ret = ncclEnqueueCheck(&info);
+  }
+  if (ncclParamResilientEnabled()){
+    cudaStreamSynchronize(stream);
+  }
+
+  return ret; 
 }

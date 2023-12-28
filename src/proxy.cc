@@ -8,14 +8,21 @@
 #include "comm.h"
 #include "info.h"
 #include "collectives.h"
+#include "bootstrap.h"
 #include "socket.h"
 #include "shm.h"
 #include "profiler.h"
 #define ENABLE_TIMER 0
 #include "timer.h"
+#include "param.h"
 
 #include <sys/syscall.h>
 #include <assert.h>
+
+extern ncclNet_t ncclNetIb;
+static bool resilientDaemonRunning = false;
+NCCL_PARAM(ResilientEnabled, "RESILIENT_ENABLED", 0);
+NCCL_PARAM(ResilientCheckInterval, "RESILIENT_CHECK_INTERVAL", 5);
 
 static bool NeedProxy(int type, int pattern, int root, struct ncclRing* ring, int nranks) {
   if (pattern == ncclPatternRing || pattern == ncclPatternRingTwice) return true;
@@ -680,7 +687,13 @@ static ncclResult_t progressOps(struct ncclProxyState* proxyState, struct ncclPr
   while (op) {
     if (op->state == ncclProxyOpNone) return ncclInternalError;
     TIME_START(0); TIME_START(1);
-    NCCLCHECK(op->progress(proxyState, op));
+    if (*proxyState->resilientRepairing)
+    {
+      // if in resilient repairing state, we need to clean up all the ops from the proxy
+      op->state = ncclProxyOpNone;
+    }else{
+      NCCLCHECK(op->progress(proxyState, op));
+    }
     if (op->idle) { TIME_STOP(1); TIME_CANCEL(0); } else { TIME_CANCEL(1); TIME_STOP(0); }
     *idle &= op->idle;
     if (op->state == ncclProxyOpNone) {
@@ -880,6 +893,7 @@ void* ncclProxyProgress(void *proxyState_) {
     }
     lastIdle = idle;
   }
+  INFO(NCCL_ALL,"[Proxy Thread] ncclProxyProgress exit");
   return NULL;
 }
 
@@ -1383,7 +1397,6 @@ static ncclResult_t proxyServiceInitOp(int type, struct ncclProxyLocalPeer* peer
 }
 
 #include <poll.h>
-
 static bool proxyMatchOpType(int type) {
   switch (type) {
     case ncclProxyMsgInit:
@@ -1434,7 +1447,10 @@ void* ncclProxyService(void* _args) {
     /* Even if local comm aborts, we cannot let proxy thread exit if we still have peer
      * connections. Need to wait until all other related comms call abort and safely exit
      * together, or we could face segmentation fault. */
-    if (*proxyState->abortFlag != 0) stop = 1;
+    if (*proxyState->abortFlag != 0) {
+      INFO(NCCL_INIT|NCCL_NET,"ncclProxyService: receive the abortFlag signal now \n");
+      stop = 1;
+    }
     /* never let proxy service thread blocks in poll, or it cannot receive abortFlag. */
     int ret;
     do {
@@ -1551,6 +1567,46 @@ void* ncclProxyService(void* _args) {
   return NULL;
 }
 
+void* ncclResilientDaemon(void* _args) {
+  ncclComm *comm = (ncclComm*)_args;
+  INFO(NCCL_INIT, "[Proxy Service] start the ncclResilientDaemon now, ranks:%d, rank:%d", comm->nRanks, comm->rank);
+  int interval = ncclParamResilientCheckInterval();
+  int *status = (int*)malloc(comm->nRanks * sizeof(int));
+  if (status == NULL) {
+    WARN("[Proxy Service] ncclResilientDaemon, memory allocation failed, ncclResilientDaemon will quit soon");
+  }
+  while(resilientDaemonRunning)
+  { 
+    if (!comm->resilientRepairing)
+    {
+      int nicStat = 0;
+      memset(status, 0, comm->nRanks * sizeof(int));
+
+      ncclNetIb.getStatus(&nicStat);
+      status[comm->rank] = nicStat;
+      
+      bootstrapAllGather(comm->bootstrap, status, comm->nRanks * sizeof(int));
+      int all_status = 0;
+      for (int i = 0; i < comm->nRanks; ++i) {
+        all_status |= status[i];
+      }
+        
+      if (0 != all_status)
+      {
+        INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, detect the nic failure, will abort the kernel execution now");
+        *comm->resilientRepairing = true;
+        // *comm->abortFlag = 1;
+        continue;
+      }
+    }
+    sleep(interval);
+  }
+  free(status); 
+
+  INFO(NCCL_INIT, "[Proxy Service] will quit the ncclResilientDaemon now");
+  return NULL;
+}
+
 ncclResult_t ncclProxyInit(struct ncclComm* comm, struct ncclSocket* sock, union ncclSocketAddress* peerAddresses) {
   assert(comm->sharedRes->proxyState == NULL);
   NCCLCHECK(ncclCalloc(&comm->sharedRes->proxyState, 1));
@@ -1579,10 +1635,17 @@ ncclResult_t ncclProxyCreate(struct ncclComm* comm) {
     proxyState->dmaBufSupport = comm->dmaBufSupport;
     proxyState->ncclNet = comm->ncclNet;
     proxyState->ncclCollNet = comm->ncclCollNet;
+    proxyState->resilientRepairing = comm->resilientRepairing;
     memcpy(proxyState->buffSizes, comm->buffSizes, sizeof(comm->buffSizes));
 
     pthread_create(&comm->proxyState->thread, NULL, ncclProxyService, comm->proxyState);
     ncclSetThreadName(comm->proxyState->thread, "NCCL Service %2d", comm->cudaDev);
+
+    if (ncclParamResilientEnabled()){
+      pthread_t resilientDaemonthread; 
+      resilientDaemonRunning = true;
+      pthread_create(&resilientDaemonthread, NULL, ncclResilientDaemon, comm);
+    }
   }
   return ncclSuccess;
 }
@@ -1625,7 +1688,7 @@ ncclResult_t ncclProxyStop(struct ncclComm* comm) {
       }
     }
   }
-
+  resilientDaemonRunning = false;
   return ncclSuccess;
 }
 

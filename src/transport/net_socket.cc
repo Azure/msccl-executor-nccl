@@ -104,6 +104,14 @@ ncclResult_t ncclNetSocketGetProperties(int dev, ncclNetProperties_t* props) {
   return ncclSuccess;
 }
 
+ncclResult_t ncclNetSocketGetStatus(int* nstat){
+  return ncclSuccess;
+}
+ncclResult_t ncclNetSocketSetStatus(int nstat){
+  return ncclSuccess;
+}
+
+
 /* Communication functions */
 
 #define MAX_SOCKETS 64
@@ -597,6 +605,8 @@ ncclNet_t ncclNetSocket = {
   ncclNetSocketInit,
   ncclNetSocketDevices,
   ncclNetSocketGetProperties,
+  ncclNetSocketGetStatus,
+  ncclNetSocketSetStatus,
   ncclNetSocketListen,
   ncclNetSocketConnect,
   ncclNetSocketAccept,
