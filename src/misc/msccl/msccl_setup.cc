@@ -5,7 +5,7 @@
 
 #include "channel.h"
 #include "checks.h"
-#include "collectives.h"
+#include "device.h"
 #include "proxy.h"
 #include "transport.h"
 
@@ -242,8 +242,8 @@ static ncclResult_t hostToDevRedOp(
   switch (int(op)) {
   case ncclSum:  opFull->op = ncclDevSum;  break;
   case ncclProd: opFull->op = ncclDevProd; break;
-  case ncclMax:  opFull->op = ncclDevMax;  break;
-  case ncclMin:  opFull->op = ncclDevMin;  break;
+  case ncclMax:  opFull->op = ncclDevMinMax;  break;
+  case ncclMin:  opFull->op = ncclDevMinMax;  break;
   case ncclAvg:
     switch ((int)datatype) {
     case ncclInt8:  case ncclInt32:  case ncclInt64:
@@ -388,8 +388,7 @@ static ncclResult_t hostToDevRedOp(
 #define MSCCL_KERNEL_ENTRY() \
   MSCCL_KERNEL_ENTRY_DEVREDOP(Sum), \
   MSCCL_KERNEL_ENTRY_DEVREDOP(Prod), \
-  MSCCL_KERNEL_ENTRY_DEVREDOP(Max), \
-  MSCCL_KERNEL_ENTRY_DEVREDOP(Min), \
+  MSCCL_KERNEL_ENTRY_DEVREDOP(MinMax), \
   MSCCL_KERNEL_ENTRY_DEVREDOP(PreMulSum), \
   MSCCL_KERNEL_ENTRY_DEVREDOP_NOFLOAT(SumPostDiv)
 

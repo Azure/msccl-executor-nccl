@@ -10,6 +10,11 @@
 #include "nccl.h"
 #include "nccl_common.h"
 #include "align.h"
+
+#if defined(ENABLE_NPKIT)
+#include "npkit/npkit_struct.h"
+#endif
+
 #include <stdint.h>
 
 extern const char* ncclFuncStr[NCCL_NUM_FUNCTIONS];
@@ -308,6 +313,12 @@ struct ncclDevComm {
 
   // Channels, device side
   struct ncclDevChannel* channels/*[MAXCHANNELS]*/;
+
+#if defined(ENABLE_NPKIT)
+  NpKitEventCollectContext* npKitEventCollectContexts;
+  uint64_t* cpuTimestamp;
+#endif
+
 };
 
 struct alignas(16) ncclDevCommAndChannels {
@@ -399,6 +410,10 @@ inline bool ncclNvlsSupported(int devRedOp, int type) {
   #if defined(__CUDA_BF16_TYPES_EXIST__)
   case ncclBfloat16:
   #endif
+  #if defined(__CUDA_FP8_TYPES_EXIST__)
+  case ncclFp8E4M3:
+  case ncclFp8E5M2:
+  #endif
     return devRedOp == ncclDevSum || devRedOp == ncclDevMinMax;
   case ncclFloat:
   case ncclDouble:
@@ -410,7 +425,7 @@ inline bool ncclNvlsSupported(int devRedOp, int type) {
 
 // `ncclDevFuncIndex()` needs to be in sync with "all_functions()" in "src/device/generate.py"
 inline int ncclDevFuncId(int coll, int devRedOp, int type, int algo, int proto) {
-  #if defined(__CUDA_BF16_TYPES_EXIST__)
+  #if defined(__CUDA_BF16_TYPES_EXIST__) || defined(__CUDA_FP8_TYPES_EXIST__)
   constexpr int NumTypes = ncclNumTypes;
   #else
   constexpr int NumTypes = ncclNumTypes + 1;

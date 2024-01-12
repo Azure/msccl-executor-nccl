@@ -19,8 +19,6 @@
 #include <unistd.h>
 #include <sys/time.h>
 
-enum { proxyRecv=0, proxySend=1 };
-
 static bool NeedProxy(int type, int pattern, int root, struct ncclRing* ring, int nranks) {
   if (pattern == ncclPatternRing || pattern == ncclPatternRingTwice) return true;
 
