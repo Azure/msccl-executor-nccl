@@ -500,7 +500,7 @@ ncclResult_t mscclTeardown() {
       CUDACHECK(cudaFree(p.second));
     }
     CUDACHECK(cudaFree(status.scratchBuffer));
-    CUDACHECK(cudaFree(status.syncFlags));
+    NCCLCHECK(ncclCudaFree(status.syncFlags));
     status.hostAlgos.clear();
     status.devAlgos.clear();
     status.freeAlgoHandles.clear();

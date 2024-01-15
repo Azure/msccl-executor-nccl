@@ -168,26 +168,12 @@ enum mscclCaptureStatus {
   mscclExistingCapture
 };
 
-// struct mscclProxyArg {
-//   struct ncclChannel* channel;
-//   int opType;
-//   int peer;
-//   struct ncclProxyOp* proxyOp;
-//   int connIndex;
-//   mscclProxyArg(struct ncclChannel* channel, int opType, int peer, struct ncclProxyOp* proxyOp, int connIndex) 
-//     : channel(channel), opType(opType), peer(peer), proxyOp(proxyOp), connIndex(connIndex) {}
-// };
-
 struct mscclProxyArg {
   struct mscclAlgo* hostAlgo;
   ncclComm_t comm;
   mscclProxyArg(struct mscclAlgo* hostAlgo, ncclComm_t comm) 
     : hostAlgo(hostAlgo), comm(comm) {}
 };
-
-// typedef std::map<ncclComm_t, std::vector<struct mscclProxyArg>> mscclSavedCudaHostNodeParams;
-
-// typedef std::map<unsigned long long, std::vector<mscclSavedCudaHostNodeParams>> mscclSavedProxyArgs;
 
 typedef std::map<unsigned long long, std::vector<struct mscclProxyArg>> mscclSavedProxyArgs;
 
