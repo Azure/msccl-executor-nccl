@@ -414,7 +414,6 @@ ncclResult_t mscclEnqueueCheck(
     size_t count, ncclDataType_t dataType, int root, int peer, ncclRedOp_t op,
     mscclFunc_t func, ncclComm_t comm, cudaStream_t stream) {
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
-
   threadLocalStatus.savedSchedulerParams.push_back({});
   NCCLCHECK(mscclSetSavedSchedulerParam(
     sendBuff, sendCounts, sDisPls, recvBuff, recvCounts, rDisPls,
@@ -497,9 +496,9 @@ ncclResult_t mscclTeardown() {
       status.freeAlgoHandles.push_back(p.first);
     }
     for (auto &p : status.devAlgos) {
-      CUDACHECK(cudaFree(p.second));
+      NCCLCHECK(ncclCudaFree(p.second));
     }
-    CUDACHECK(cudaFree(status.scratchBuffer));
+    NCCLCHECK(ncclCudaFree(status.scratchBuffer));
     NCCLCHECK(ncclCudaFree(status.syncFlags));
     status.hostAlgos.clear();
     status.devAlgos.clear();
