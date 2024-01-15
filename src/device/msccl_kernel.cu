@@ -4,7 +4,7 @@
  *
  * See LICENSE.txt for license information
  ************************************************************************/
-#include "devcomm.h"
+#include "device.h"
 #include "primitives.h"
 #include "collectives.h"
 

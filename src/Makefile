@@ -4,17 +4,18 @@
 #
 # See LICENSE.txt for license information
 #
-
 include ../makefiles/common.mk
 include ../makefiles/version.mk
 
 ##### src files
 INCEXPORTS  := nccl.h nccl_net.h
-LIBSRCFILES := init.cc init_nvtx.cc channel.cc bootstrap.cc transport.cc enqueue.cc group.cc collectives.cc debug.cc proxy.cc net.cc \
-				$(wildcard misc/msccl/*.cc) \
-				$(wildcard misc/*.cc) \
-				$(wildcard transport/*.cc) \
-                $(wildcard graph/*.cc)
+LIBSRCFILES := \
+	bootstrap.cc channel.cc collectives.cc debug.cc enqueue.cc group.cc \
+	init.cc init_nvtx.cc net.cc proxy.cc transport.cc \
+	$(wildcard graph/*.cc) \
+	$(wildcard misc/*.cc) \
+	$(wildcard transport/*.cc) \
+	$(wildcard misc/msccl/*.cc) 
 
 ##### lib files
 LIBNAME     := libnccl.so
@@ -45,7 +46,7 @@ LIBOBJ     := $(LIBSRCFILES:%.cc=$(OBJDIR)/%.o)
 DEPFILES   := $(LIBOBJ:%.o=%.d)
 LDFLAGS    += -L${CUDA_LIB} -l$(CUDARTLIB) -lpthread -lrt -ldl
 
-DEVICELIB  := $(BUILDDIR)/obj/collectives/device/colldevice.a
+DEVMANIFEST := $(BUILDDIR)/obj/device/manifest
 
 ##### rules
 build : lib staticlib msccl-algorithms
