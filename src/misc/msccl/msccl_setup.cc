@@ -239,11 +239,24 @@ static ncclResult_t hostToDevRedOp(
   };
   u64 = 0;
   opFull->scalarArgIsPtr = false;
+  int nbits = 8*ncclTypeSize(datatype);
+  uint64_t allBits = uint64_t(-1)>>(64-nbits);
+  uint64_t signBit = allBits^(allBits>>1);
+  
   switch (int(op)) {
   case ncclSum:  opFull->op = ncclDevSum;  break;
   case ncclProd: opFull->op = ncclDevProd; break;
-  case ncclMax:  opFull->op = ncclDevMinMax;  break;
-  case ncclMin:  opFull->op = ncclDevMinMax;  break;
+  case ncclMax:
+  case ncclMin:
+    opFull->op = ncclDevMinMax;
+    opFull->scalarArg = 0;
+    // The xormask used by ncclFuncMinMax<[u]int> is the XOR of the sign bit
+    // for signed (opposed to unsigned) types and all the bits for max (opposed to min).
+    if (datatype==ncclInt8 || datatype==ncclInt32 || datatype==ncclInt64) {
+      opFull->scalarArg ^= signBit;
+    }
+    opFull->scalarArg ^= (op == ncclMax) ? allBits : 0;
+    break;
   case ncclAvg:
     switch ((int)datatype) {
     case ncclInt8:  case ncclInt32:  case ncclInt64:
