@@ -64,13 +64,13 @@ ncclResult_t ncclLaunchOneRank(void* dst, void const* src, size_t nElts, struct 
   case ncclInt64:    kernel = (void const*)&oneRankReduce<FuncPreMulSum<int64_t>>; break;
   case ncclUint64:   kernel = (void const*)&oneRankReduce<FuncPreMulSum<uint64_t>>; break;
   case ncclFloat16:  kernel = (void const*)&oneRankReduce<FuncPreMulSum<half>>; break;
-  #if defined(__CUDA_BF16_TYPES_EXIST__)
+#if defined(__CUDA_BF16_TYPES_EXIST__)
   case ncclBfloat16: kernel = (void const*)&oneRankReduce<FuncPreMulSum<__nv_bfloat16>>; break;
-  #endif
-  #if defined(__CUDA_FP8_TYPES_EXIST__)
+#endif
+#if defined(__CUDA_FP8_TYPES_EXIST__)
   case ncclFp8E4M3: kernel = (void const*)&oneRankReduce<FuncPreMulSum<__nv_fp8_e4m3>>; break;
   case ncclFp8E5M2: kernel = (void const*)&oneRankReduce<FuncPreMulSum<__nv_fp8_e5m2>>; break;
-  #endif
+#endif
   case ncclFloat32:  kernel = (void const*)&oneRankReduce<FuncPreMulSum<float>>; break;
   case ncclFloat64:  kernel = (void const*)&oneRankReduce<FuncPreMulSum<double>>; break;
   default: return ncclInvalidArgument;
