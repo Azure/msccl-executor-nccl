@@ -813,12 +813,6 @@ struct Apply_LoadMultimem {
     DEFINE_Apply_LoadMultimem_sum_v4x2_and_subhalf(__nv_bfloat16, bf16x2, u32)
     DEFINE_Apply_LoadMultimem_minmax_v4x2_and_subhalf(__nv_bfloat16, bf16x2, u32)
   #endif
-  #if defined(__CUDA_FP8_TYPES_EXIST__)
-    DEFINE_Apply_LoadMultimem_sum_v4x2_and_subhalf(__nv_fp8_e4m3, e4m3x2, u16)
-    DEFINE_Apply_LoadMultimem_minmax_v4x2_and_subhalf(__nv_fp8_e4m3, e4m3x2, u16)
-    DEFINE_Apply_LoadMultimem_sum_v4x2_and_subhalf(__nv_fp8_e5m2, e5m2x2, u16)
-    DEFINE_Apply_LoadMultimem_minmax_v4x2_and_subhalf(__nv_fp8_e5m2, e5m2x2, u16)
-  #endif
 #else
   template<typename Fn>
   struct LoadMultimem_BigPackSize {

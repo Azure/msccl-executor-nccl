@@ -124,7 +124,7 @@ def required_cuda(coll, redop, ty, algo, proto):
       # Must match ncclNvlsSupported() in src/include/device.h
       nvls_ok = ((ty in ("i32","u32","i64","u64") and redop in ("Sum","MinMax")) or
                  (ty in ("f32","f64") and redop=="Sum") or
-                 (ty in ("f16","bf16","fp8_e4m3","fp8_e5m2") and redop in ("Sum","MinMax")))
+                 (ty in ("f16","bf16") and redop in ("Sum","MinMax")))
       if not nvls_ok: return None
     cudart = max(cudart, 12010)
     arch = max(arch, 900)
