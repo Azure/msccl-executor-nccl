@@ -19,6 +19,7 @@
 #define SM86_NVLINK_BW 12.0
 #define PCI_BW 12.0           // PCI Gen3 x16
 #define QPI_BW 6.0
+#define AMD_BW 16.0
 #define SKL_QPI_BW 10.0
 #define ZPI_BW 6.0
 #define YONGFENG_ZPI_BW 9.0
@@ -208,5 +209,15 @@ static float ncclTopoNVLinkBw(int cudaCompCap) {
     cudaCompCap >= 70 ? SM70_NVLINK_BW :
     cudaCompCap >= 60 ? SM60_NVLINK_BW :
     SM80_NVLINK_BW;
+}
+
+// Mirror bits
+static bool isPow2(int val) {
+  return (val & (val-1)) == 0;
+}
+static int mirrorBits(int val, int pow2) {
+  int mirror = 0;
+  for (int b=1, mb=(pow2>>1); b<pow2; b<<=1, mb>>=1) if (val & b) mirror |= mb;
+  return mirror;
 }
 #endif
