@@ -445,6 +445,16 @@ ncclResult_t mscclEnqueueCheck(
   mscclThreadLocalStatus& threadLocalStatus = mscclGetThreadLocalStatus();
 
   threadLocalStatus.savedSchedulerParams.push_back({});
+  bool repair = false;
+  INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck now");
+  // if(ncclParamResilientEnabled() && *comm->resilientRepairing)
+  // {
+  //   INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck and in resilient repairing mode now");
+  //   *comm->resilientRepairing = false;
+  //   // *comm->abortFlag = 0;
+  //   ncclNetIb.setStatus(0);
+  //   repair = true;
+  // }
   NCCLCHECK(mscclSetSavedSchedulerParam(
     sendBuff, sendCounts, sDisPls, recvBuff, recvCounts, rDisPls,
     count, dataType, root, peer, op, func, comm, stream, *comm->resilientRepairing, &bootstrapSend, &bootstrapRecv, &bootstrapAllGather, 
@@ -455,9 +465,9 @@ ncclResult_t mscclEnqueueCheck(
       if (comm->mscclCompatible) {
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
-            if(ncclParamResilientEnabled() && comm->resilientRepairing)
+            if(ncclParamResilientEnabled() && *comm->resilientRepairing)
             {
-              INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck and in resilient repairing mode now");
+              INFO(NCCL_INIT, "MSCCL: Enter into mscclNoGroup's mscclEnqueueCheck and in resilient repairing mode now");
               *comm->resilientRepairing = false;
               // *comm->abortFlag = 0;
               ncclNetIb.setStatus(0);
@@ -473,7 +483,7 @@ ncclResult_t mscclEnqueueCheck(
       if (comm->mscclCompatible) {
           NCCLCHECK(mscclSchedulerSelectAlgo(&threadLocalStatus.savedSchedulerParams.back()));
           if (threadLocalStatus.savedSchedulerParams.back().p.scheduled) {
-            if(ncclParamResilientEnabled() && comm->resilientRepairing)
+            if(ncclParamResilientEnabled() && *comm->resilientRepairing)
             {
               INFO(NCCL_INIT, "MSCCL: Enter into mscclEnqueueCheck and in resilient repairing mode now");
               *comm->resilientRepairing = false;

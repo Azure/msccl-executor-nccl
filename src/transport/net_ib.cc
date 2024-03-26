@@ -98,7 +98,6 @@ static void* ncclIbAsyncThreadMain(void* args) {
       if (strcmp(str, "local catastrophic error") == 0) {
         WARN("NET/IB : Detect Nic failure, will repair soon, event type: %d", event.event_type);
         nicStatus = 1;
-        break;
       }
     }
     if (ncclSuccess != wrap_ibv_ack_async_event(&event)) { break; }

@@ -8,6 +8,7 @@
 #include "enqueue.h"
 #include "nccl.h"
 #include "param.h"
+#include <cuda_runtime.h>
 
 #include "msccl/msccl_lifecycle.h"
 extern int64_t ncclParamResilientEnabled();
@@ -28,7 +29,7 @@ ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count,
   };
   NvtxParamsAllReduce payload{count * ncclTypeSize(datatype), op};
   NVTX3_FUNC_WITH_PARAMS(AllReduce, AllReduceSchema, payload)
-
+  INFO(NCCL_INIT, "MSCCL: Enter into ncclAllReduce now");
   ncclResult_t ret;
   if (mscclAvailable() && !mscclIsCaller()) {
     ret = mscclEnqueueCheck(

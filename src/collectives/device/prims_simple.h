@@ -114,7 +114,7 @@ private:
     spins++;
     if (!(flags & Aborted) && spins == NCCL_SPINS_BEFORE_CHECK_ABORT) {
       if (*ncclShmem.comm.abortFlag || *ncclShmem.comm.resilientRepairing) {
-        printf("checkAbort Simple, abortFlag:%u \n", *ncclShmem.comm.abortFlag);
+        printf("checkAbort Simple, resilientRepairingFlag:%d, abortFlag:%u \n", *ncclShmem.comm.resilientRepairing, *ncclShmem.comm.abortFlag);
         flags |= Aborted;
         ncclShmem.aborted = 1;
       }
