@@ -67,6 +67,7 @@ struct ncclProxySubArgs {
   uint64_t end;
   void* requests[NCCL_STEPS];
   void* profilingEvents[NCCL_STEPS];
+  double requestTimes[NCCL_STEPS];
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_NET_SEND_ENTRY) && defined(ENABLE_NPKIT_EVENT_NET_SEND_EXIT)
   int npKitSizesFifo[NCCL_STEPS];
@@ -221,6 +222,7 @@ struct ncclProxyState {
   bool dmaBufSupport;
   ncclNet_t* ncclNet;
   ncclCollNet_t* ncclCollNet;
+  ncclNet_t* ncclResilientNet;
   volatile uint32_t* abortFlag;
   // Service thread
   pthread_t thread;
@@ -241,6 +243,8 @@ struct ncclProxyState {
 
   // Queue of expected responses from the proxy
   struct ncclExpectedProxyResponse* expectedResponses;
+  // Whether this comm is current in resilient repairing mode
+  volatile bool *resilientRepairing;
 };
 
 enum proxyConnectState {

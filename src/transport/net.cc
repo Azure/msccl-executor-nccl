@@ -185,6 +185,7 @@ static ncclResult_t canConnect(int* ret, struct ncclTopoSystem* topo, struct ncc
 
 NCCL_PARAM(NetSharedBuffers, "NET_SHARED_BUFFERS", -2);
 NCCL_PARAM(NetSharedComms, "NET_SHARED_COMMS", 1);
+NCCL_PARAM(IBSendTimeout, "IB_SEND_TIMEOUT", 100);
 
 struct setupReq {
   int tpRank;
@@ -654,6 +655,8 @@ static ncclResult_t recvProxySetup(struct ncclProxyConnection* connection, struc
 
   if (respSize != sizeof(ncclNetHandle_t)) return ncclInternalError;
   NCCLCHECK(proxyState->ncclNet->listen(req->netDev, respBuff, &resources->netListenComm));
+  
+  //TODO: resilient
   *done = 1;
 
   return ncclSuccess;
@@ -716,6 +719,8 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
     ret = proxyState->ncclNet->connect(resources->netDev, req->handle, &resources->netSendComm, &resources->netDeviceHandle);
     connection->proxyAppendPtr = &connection->proxyAppend;
   }
+
+  //TODO: resilient
 
   NCCLCHECK(ret);
   if (resources->netSendComm == NULL) {
@@ -821,6 +826,8 @@ static ncclResult_t sendProxyConnect(struct ncclProxyConnection* connection, str
     }
   }
 
+  // TODO: resilient
+
   //NCCLCHECK(netDumpMap(map));
   if (respSize != sizeof(struct connectMap)) return ncclInternalError;
   memcpy(respBuff, map, sizeof(struct connectMap));
@@ -865,6 +872,8 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
     ret = proxyState->ncclNet->accept(resources->netListenComm, &resources->netRecvComm, &resources->netDeviceHandle);
     connection->proxyAppendPtr = &connection->proxyAppend;
   }
+
+  // TODO: resilient
 
   NCCLCHECK(ret);
   if (resources->netRecvComm == NULL) {
@@ -963,6 +972,7 @@ static ncclResult_t recvProxyConnect(struct ncclProxyConnection* connection, str
         NCCLCHECK(proxyState->ncclNet->getDeviceMr(resources->netRecvComm, resources->mhandles[p], &connection->mhandles[p]));
     }
   }
+  // TODO: resilient
 
   //NCCLCHECK(netDumpMap(map));
   if (respSize != sizeof(struct connectMap)) return ncclInternalError;
@@ -1178,6 +1188,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
 #endif
 
               TRACE(NCCL_NET, "sendProxy [%ld/%d] Isend posted, req %p", sub->transmitted, buffSlot, sub->requests[buffSlot]);
+              sub->requestTimes[buffSlot] = gettime();
               sizesFifo[buffSlot] = -1;
               // Make sure size is reset to zero before we update the head.
               __sync_synchronize();
@@ -1250,6 +1261,13 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
             resources->step = sub->base + sub->nsteps;
             args->done++;
           }
+        }
+        else{
+          float tmCost = gettime() - sub->requestTimes[buffSlot];
+          if ( tmCost >= ncclParamIBSendTimeout()){
+            WARN("sendProxy [%ld/%d] request %p timeout, expected:%d, acturally:%d", sub->done, buffSlot, sub->requests[buffSlot], ncclParamIBSendTimeout(), tmCost);
+            //TODO: resilient
+            //add net_socket send logic here. 
         }
       }
     }
@@ -1475,6 +1493,7 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
           }
           args->idle = 0;
         }
+        // TODO: resilient
       }
     }
     if (args->idle == 0) return ncclSuccess;

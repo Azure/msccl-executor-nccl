@@ -235,6 +235,7 @@ struct ncclComm {
 
   ncclNet_t* ncclNet;
   ncclCollNet_t* ncclCollNet;
+  ncclNet_t* ncclResilientNet;
   void* bootstrap;
   // Bitmasks for ncclTransportP2pSetup
   uint64_t* connectSend;
@@ -380,6 +381,9 @@ struct ncclComm {
   int finalizeRankCnt;
   // Whether this comm is compatible with MSCCL
   bool mscclCompatible;
+  // Whether this comm is current in resilient repairing mode
+  volatile bool *resilientRepairing;
+
   // group job to support multi-thread FT
   struct ncclGroupJob *groupJob;
 

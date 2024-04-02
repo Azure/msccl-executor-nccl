@@ -239,6 +239,7 @@ static ncclResult_t commFree(ncclComm_t comm) {
 
   if (ncclAtomicRefCountDecrement(comm->abortFlagRefCount) == 0) {
     NCCLCHECK(ncclCudaHostFree((void *)comm->abortFlag));
+    NCCLCHECK(ncclCudaHostFree((void *)comm->resilientRepairing));
     free(comm->abortFlagRefCount);
   }
   free((void*)comm->config.netName);
@@ -420,6 +421,7 @@ static ncclResult_t devCommSetup(ncclComm_t comm) {
   tmpCommAndChans.comm.rank = comm->rank;
   tmpCommAndChans.comm.nRanks = nRanks;
   tmpCommAndChans.comm.abortFlag = comm->abortFlag;
+  tmpCommAndChans.comm.resilientRepairing = comm->resilientRepairing;
   for (int p=0; p < NCCL_NUM_PROTOCOLS; p++) {
     tmpCommAndChans.comm.buffSizes[p] = comm->buffSizes[p];
   }
@@ -1651,6 +1653,8 @@ static ncclResult_t ncclCommInitRankDev(ncclComm_t* newcomm, int nranks, ncclUni
   NCCLCHECKGOTO(ncclCudaHostCalloc((uint32_t**)&comm->abortFlag, 1), res, fail);
   NCCLCHECKGOTO(ncclCalloc((uint32_t**)&comm->abortFlagRefCount, 1), res, fail);
   *comm->abortFlagRefCount = 1;
+  NCCLCHECKGOTO(ncclCudaHostCalloc((bool**)&comm->resilientRepairing, 1), res, fail);
+  *comm->resilientRepairing = false;
   NCCLCHECKGOTO(parseCommConfig(comm, config), res, fail);
   /* start with ncclInternalError and will be changed to ncclSuccess if init succeeds. */
   comm->initState = ncclInternalError;
@@ -1670,6 +1674,7 @@ fail:
   if (comm) {
     if (comm->abortFlag) ncclCudaHostFree((void *)comm->abortFlag);
     if (comm->abortFlagRefCount) free(comm->abortFlagRefCount);
+    if (comm->resilientRepairing) ncclCudaHostFree((void *)comm->resilientRepairing);
     free(comm);
   }
   if (newcomm) *newcomm = NULL;

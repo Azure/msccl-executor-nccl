@@ -28,7 +28,7 @@
 #define MAXNAMESIZE 64
 static char ncclIbIfName[MAX_IF_NAME_SIZE+1];
 static union ncclSocketAddress ncclIbIfAddr;
-
+extern pthread_cond_t resilient_cond;
 struct ncclIbMr {
   uintptr_t addr;
   int pages;
@@ -92,7 +92,13 @@ static void* ncclIbAsyncThreadMain(void* args) {
     char *str;
     if (ncclSuccess != wrap_ibv_event_type_str(&str, event.event_type)) { break; }
     if (event.event_type != IBV_EVENT_COMM_EST)
-      WARN("NET/IB : Got async event : %s", str);
+    {
+      WARN("NET/IB : Got async event : %s, event type: %d", str, event.event_type);
+      if (strcmp(str, "local catastrophic error") == 0) {
+        WARN("NET/IB : Detect Nic failure, will repair soon, event type: %d", event.event_type);
+         pthread_cond_signal(&resilient_cond);
+      }
+    }
     if (ncclSuccess != wrap_ibv_ack_async_event(&event)) { break; }
   }
   return NULL;

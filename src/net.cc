@@ -357,6 +357,10 @@ ncclResult_t ncclNetInit(struct ncclComm* comm) {
     }
 
     comm->ncclNet = ncclNets[i];
+    if (1 == i) {
+      // if ibbackend been selected, we will init the front end network as backup
+      comm->ncclResilientNet = ncclNets[i+1];
+    }
     ok = true;
 
     if (ncclCollNets[i]) {

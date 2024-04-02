@@ -8,6 +8,7 @@
 #include "comm.h"
 #include "info.h"
 #include "collectives.h"
+#include "bootstrap.h"
 #include "socket.h"
 #include "shm.h"
 #include "profiler.h"
@@ -18,6 +19,12 @@
 #include <assert.h>
 #include <unistd.h>
 #include <sys/time.h>
+
+pthread_mutex_t resilient_mutex = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t resilient_cond = PTHREAD_COND_INITIALIZER;
+static bool resilientDaemonRunning = false;
+NCCL_PARAM(ResilientEnabled, "RESILIENT_ENABLED", 0);
+NCCL_PARAM(ResilientCheckInterval, "RESILIENT_CHECK_INTERVAL", 5);
 
 static bool NeedProxy(int type, int pattern, int root, struct ncclRing* ring, int nranks) {
   if (pattern == ncclPatternRing || pattern == ncclPatternRingTwice) return true;
@@ -1567,6 +1574,37 @@ void* ncclProxyService(void* _args) {
   return NULL;
 }
 
+void* ncclResilientDaemon(void* _args) {
+  ncclComm *comm = (ncclComm*)_args;
+  INFO(NCCL_INIT, "[Proxy Service] start the ncclResilientDaemon now, ranks:%d, rank:%d", comm->nRanks, comm->rank);
+  int *status = (int*)malloc(comm->nRanks * sizeof(int));
+  if (status == NULL) {
+    WARN("[Proxy Service] ncclResilientDaemon, memory allocation failed, ncclResilientDaemon will quit soon");
+  }
+  while(resilientDaemonRunning)
+  { 
+    pthread_mutex_lock(&resilient_mutex);
+    memset(status, 0, comm->nRanks * sizeof(int));
+    pthread_cond_wait(&resilient_cond, &resilient_mutex);
+    status[comm->rank] = 1;
+    bootstrapAllGather(comm->bootstrap, status, comm->nRanks * sizeof(int));
+    int all_status = 0;
+    for (int i = 0; i < comm->nRanks; ++i) {
+      all_status |= status[i];
+    }
+    if (0 != all_status)
+    {
+      INFO(NCCL_INIT, "[Proxy Service] ncclResilientDaemon, detect the nic failure, will abort the kernel execution now");
+      *comm->resilientRepairing = true;
+    }
+    pthread_mutex_unlock(&resilient_mutex);
+  }
+  free(status); 
+
+  INFO(NCCL_INIT, "[Proxy Service] will quit the ncclResilientDaemon now");
+  return NULL;
+}
+
 ncclResult_t ncclProxyInit(struct ncclComm* comm, struct ncclSocket* sock, union ncclSocketAddress* peerAddresses) {
   assert(comm->sharedRes->proxyState == NULL);
   NCCLCHECK(ncclCalloc(&comm->sharedRes->proxyState, 1));
@@ -1601,10 +1639,18 @@ ncclResult_t ncclProxyCreate(struct ncclComm* comm) {
     proxyState->dmaBufSupport = comm->dmaBufSupport;
     proxyState->ncclNet = comm->ncclNet;
     proxyState->ncclCollNet = comm->ncclCollNet;
+    proxyState->ncclResilientNet = comm->ncclResilientNet;
+    proxyState->resilientRepairing = comm->resilientRepairing;
     memcpy(proxyState->buffSizes, comm->buffSizes, sizeof(comm->buffSizes));
 
     pthread_create(&comm->proxyState->thread, NULL, ncclProxyService, comm->proxyState);
     ncclSetThreadName(comm->proxyState->thread, "NCCL Service %2d", comm->cudaDev);
+
+    if (ncclParamResilientEnabled()){
+      pthread_t resilientDaemonthread; 
+      resilientDaemonRunning = true;
+      pthread_create(&resilientDaemonthread, NULL, ncclResilientDaemon, comm);
+    }
   }
   return ncclSuccess;
 }
@@ -1647,7 +1693,8 @@ ncclResult_t ncclProxyStop(struct ncclComm* comm) {
       }
     }
   }
-
+  
+  resilientDaemonRunning = false;
   return ncclSuccess;
 }
 
