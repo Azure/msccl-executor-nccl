@@ -28,6 +28,11 @@
 #define MAXNAMESIZE 64
 static char ncclIbIfName[MAX_IF_NAME_SIZE+1];
 static union ncclSocketAddress ncclIbIfAddr;
+pthread_cond_t resilient_cond;
+static bool resilientDaemonRunning = false;
+static bool resilientRepairing = false;
+NCCL_PARAM(ResilientEnabled, "RESILIENT_ENABLED", 0);
+NCCL_PARAM(ResilientCheckInterval, "RESILIENT_CHECK_INTERVAL", 5);
 
 struct ncclIbMr {
   uintptr_t addr;
@@ -92,7 +97,13 @@ static void* ncclIbAsyncThreadMain(void* args) {
     char *str;
     if (ncclSuccess != wrap_ibv_event_type_str(&str, event.event_type)) { break; }
     if (event.event_type != IBV_EVENT_COMM_EST)
-      WARN("NET/IB : Got async event : %s", str);
+    {
+      WARN("NET/IB : Got async event : %s, event type: %d", str, event.event_type);
+      if (strcmp(str, "local catastrophic error") == 0) {
+        WARN("NET/IB : Detect Nic failure, will repair soon, event type: %d", event.event_type);
+         pthread_cond_signal(&resilient_cond);
+      }
+    }
     if (ncclSuccess != wrap_ibv_ack_async_event(&event)) { break; }
   }
   return NULL;
@@ -362,6 +373,9 @@ struct ncclIbQpInfo {
   // FIFO RDMA info
   uint32_t fifoRkey;
   uint64_t fifoAddr;
+
+  // for resilient frontend network
+  uint8_t resilient_port;
 };
 
 enum ncclIbCommState {
@@ -434,6 +448,7 @@ struct ncclIbListenComm {
   struct ncclSocket sock;
   struct ncclIbCommStage stage;
 };
+struct ncclSocket resilientListenSocket; 
 
 struct ncclIbSendFifo {
   uint64_t addr;
@@ -499,6 +514,52 @@ struct ncclIbRecvComm {
 static_assert((offsetof(struct ncclIbRecvComm, remFifo) % 32) == 0, "ncclIbSendComm fifo must be 32-byte aligned");
 
 NCCL_PARAM(IbQpsPerConn, "IB_QPS_PER_CONNECTION", 1);
+
+void* ncclResilientWorkerDaemon(void* _args) {
+  struct ncclIbRecvComm* rComm = (struct ncclIbRecvComm*)_args;
+
+  char addrline[SOCKET_NAME_MAXLEN+1];
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : Enter into ncclResilientWorkerDaemon: %s", ncclSocketToString(&rComm->sock.addr, addrline));
+
+  int interval = ncclParamResilientCheckInterval();
+
+  while(resilientDaemonRunning)
+  { 
+    char buffer[6];
+    int offset = 0;
+    INFO(NCCL_INIT|NCCL_NET, "NET/IB : start to receive data: %s", buffer);
+    ncclSocketProgress(NCCL_SOCKET_RECV, &rComm->sock, buffer, 6, &offset);
+    INFO(NCCL_INIT|NCCL_NET, "NET/IB : receive data: %s", buffer);
+    
+    sleep(interval);
+  }
+
+  INFO(NCCL_INIT, "[Proxy Service] will quit the ncclResilientDaemon now");
+  return NULL;
+}
+
+void* ncclResilientDaemon(void* _args) {
+  struct ncclIbListenComm* lComm = (struct ncclIbListenComm*)_args;
+  
+  char addrline[SOCKET_NAME_MAXLEN+1];
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : Enter into ncclResilientDaemon: %s, state: %d", ncclSocketToString(&lComm->sock.addr, addrline), lComm->sock.state);
+
+  int interval = ncclParamResilientCheckInterval();
+
+  while(resilientDaemonRunning)
+  { 
+    struct ncclIbRecvComm* rComm = NULL;
+    ncclIbMalloc((void**)&rComm, sizeof(struct ncclIbRecvComm));
+    ncclSocketInit(&rComm->sock);
+    ncclSocketAccept(&rComm->sock, &lComm->sock);
+    pthread_t resilientDaemonthread; 
+    pthread_create(&resilientDaemonthread, NULL, ncclResilientWorkerDaemon, rComm);
+    sleep(interval);
+  }
+
+  INFO(NCCL_INIT, "[Proxy Service] will quit the ncclResilientDaemon now");
+  return NULL;
+}
 
 ncclResult_t ncclIbInitVerbs(int dev, struct ibv_context* ctx, struct ncclIbVerbs* verbs) {
   verbs->dev = dev;
@@ -611,6 +672,9 @@ ncclResult_t ncclIbListen(int dev, void* opaqueHandle, void** listenComm) {
   NCCLCHECK(ncclSocketListen(&comm->sock));
   NCCLCHECK(ncclSocketGetAddr(&comm->sock, &handle->connectAddr));
   *listenComm = comm;
+  char addrline[SOCKET_NAME_MAXLEN+1];
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : Ib Listening on %s", ncclSocketToString(&comm->sock.addr, addrline));
+
   return ncclSuccess;
 }
 
@@ -620,6 +684,8 @@ ncclResult_t ncclIbConnect(int dev, void* opaqueHandle, void** sendComm, ncclNet
   struct ncclIbSendComm* comm = (struct ncclIbSendComm*)stage->comm;
   int ready;
   *sendComm = NULL;
+  
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbConnect state: %d", stage->state);
 
   if (stage->state == ncclIbCommStateConnect)    goto ib_connect_check;
   if (stage->state == ncclIbCommStateSend)       goto ib_send;
@@ -635,6 +701,8 @@ ncclResult_t ncclIbConnect(int dev, void* opaqueHandle, void** sendComm, ncclNet
   stage->comm = comm;
   stage->state = ncclIbCommStateConnect;
   NCCLCHECK(ncclSocketConnect(&comm->sock));
+  char addrline[SOCKET_NAME_MAXLEN+1];
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : Ib Connecting to %s", ncclSocketToString(&handle->connectAddr, addrline));
 
 ib_connect_check:
   /* since ncclSocketConnect is async, we must check if connection is complete */
@@ -752,6 +820,10 @@ ncclResult_t ncclIbAccept(void* listenComm, void** recvComm, ncclNetDeviceHandle
   struct ncclIbRecvComm* rComm = (struct ncclIbRecvComm*)stage->comm;
   int ready;
   *recvComm = NULL;
+  char addrline[SOCKET_NAME_MAXLEN+1];
+  char addrline1[SOCKET_NAME_MAXLEN+1];
+  // INFO(NCCL_INIT|NCCL_NET, "NET/IB : Ib Accept lComm: %s, rComm: %s", ncclSocketToString(&lComm->sock.addr, addrline), ncclSocketToString(&rComm->sock.addr, addrline1));
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbAccept state: %d", stage->state);
 
   if (stage->state == ncclIbCommStateAccept) goto ib_accept_check;
   if (stage->state == ncclIbCommStateRecv) goto ib_recv;
@@ -767,6 +839,8 @@ ncclResult_t ncclIbAccept(void* listenComm, void** recvComm, ncclNetDeviceHandle
   stage->state = ncclIbCommStateAccept;
   NCCLCHECK(ncclSocketInit(&rComm->sock));
   NCCLCHECK(ncclSocketAccept(&rComm->sock, &lComm->sock));
+  char addrline2[SOCKET_NAME_MAXLEN+1];
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbAccept (receive socket addr): %s", ncclSocketToString(&rComm->sock.addr, addrline2));
 
 ib_accept_check:
   NCCLCHECK(ncclSocketReady(&rComm->sock, &ready));
@@ -878,6 +952,17 @@ ib_send:
 ib_recv_ready:
   NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_RECV,  &rComm->sock, &rComm->ready, sizeof(int), &stage->offset));
   if (stage->offset != sizeof(int)) return ncclSuccess;
+
+  char addrline3[SOCKET_NAME_MAXLEN+1];
+  char addrline4[SOCKET_NAME_MAXLEN+1];
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbAccept (listen socket addr): %s, state: %d, (receive socket addr): %s", ncclSocketToString(&lComm->sock.addr, addrline3), lComm->sock.state, ncclSocketToString(&rComm->sock.addr, addrline4));
+
+  if (ncclParamResilientEnabled()){
+    pthread_t resilientDaemonthread; 
+    resilientDaemonRunning = true;
+    //pthread_create(&resilientDaemonthread, NULL, ncclResilientDaemon, lComm);
+    pthread_create(&resilientDaemonthread, NULL, ncclResilientWorkerDaemon, rComm);
+  }
 
   free(stage->buffer);
   *recvComm = rComm;
@@ -1089,6 +1174,7 @@ ncclResult_t ncclIbMultiSend(struct ncclIbSendComm* comm, int slot) {
 }
 
 ncclResult_t ncclIbIsend(void* sendComm, void* data, int size, int tag, void* mhandle, void** request) {
+  //INFO(NCCL_NET|NCCL_ENV, "ncclIbIsend been called");
   struct ncclIbSendComm* comm = (struct ncclIbSendComm*)sendComm;
   if (comm->ready == 0) { WARN("NET/IB: ncclIbIsend() called when comm->ready == 0"); return ncclInternalError; }
   if (comm->ready == 0) { *request = NULL; return ncclSuccess; }
@@ -1141,6 +1227,14 @@ ncclResult_t ncclIbIsend(void* sendComm, void* data, int size, int tag, void* mh
     req->events = ncclParamIbSplitDataOnQps() ? comm->nqps : 1;
     if (comm->gidInfo.link_layer == IBV_LINK_LAYER_ETHERNET) req->gidInfo = &comm->gidInfo;
     *request = reqs[r] = req;
+
+    struct ncclIbSendComm* sComm = NULL;
+    NCCLCHECK(ncclIbMalloc((void**)&sComm, sizeof(struct ncclIbSendComm)));
+    NCCLCHECK(ncclSocketInit(&sComm->sock, &comm->sock.addr, NCCL_SOCKET_MAGIC, ncclSocketTypeNetIb, NULL, 1));
+    NCCLCHECK(ncclSocketConnect(&sComm->sock));
+
+    char addrline[SOCKET_NAME_MAXLEN+1];
+    INFO(NCCL_INIT|NCCL_NET, "NET/IB : Ib Send on %s", ncclSocketToString(&comm->sock.addr, addrline));
 
     // If this is a multi-recv, send only when all requests have matched.
     for (int r=0; r<nreqs; r++) {
@@ -1227,6 +1321,9 @@ ncclResult_t ncclIbIrecv(void* recvComm, int n, void** data, int* sizes, int* ta
   if (comm->ready == 0) { WARN("NET/IB: ncclIbIrecv() called when comm->ready == 0"); return ncclInternalError; }
   if (comm->ready == 0) { *request = NULL; return ncclSuccess; }
   if (n > NCCL_NET_IB_MAX_RECVS) return ncclInternalError;
+
+  char addrline[SOCKET_NAME_MAXLEN+1];
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbIrecv (socket addr): %s", ncclSocketToString(&comm->sock.addr, addrline));
 
   struct ncclIbRequest* req;
   NCCLCHECK(ncclIbGetRequest(&comm->verbs, &req));
@@ -1323,6 +1420,8 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
         char line[SOCKET_NAME_MAXLEN+1];
         union ncclSocketAddress addr;
         ncclSocketGetAddr(r->sock, &addr);
+        char addrline[SOCKET_NAME_MAXLEN+1];
+        INFO(NCCL_INIT|NCCL_NET, "NET/IB : Ib Test on %s", ncclSocketToString(&r->sock->addr, addrline));
         char localGidString[INET6_ADDRSTRLEN] = "";
         char remoteGidString[INET6_ADDRSTRLEN] = "";
         const char* localGidStr = NULL, *remoteGidStr = NULL;
@@ -1357,7 +1456,11 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
         }
         req->events--;
       }
+      char buffer [6] = "hello";
+      int offset = 0;
+      NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_SEND, req->sock, buffer, 6, &offset));
     }
+    
   }
 }
 
@@ -1393,11 +1496,11 @@ ncclResult_t ncclIbCloseRecv(void* recvComm) {
 }
 
 ncclResult_t ncclIbCloseListen(void* listenComm) {
-  struct ncclIbListenComm* comm = (struct ncclIbListenComm*)listenComm;
-  if (comm) {
-    NCCLCHECK(ncclSocketClose(&comm->sock));
-    free(comm);
-  }
+  // struct ncclIbListenComm* comm = (struct ncclIbListenComm*)listenComm;
+  // if (comm) {
+  //   NCCLCHECK(ncclSocketClose(&comm->sock));
+  //   free(comm);
+  // }
   return ncclSuccess;
 }
 
