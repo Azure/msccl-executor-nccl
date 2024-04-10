@@ -142,10 +142,10 @@ ncclResult_t NpKit::Shutdown() {
 
   // Free GPU event data structures
   for (i = 0; i < kNumGpuEventBuffers; i++) {
-    CUDACHECK(cudaFree(gpu_event_buffers_[i]));
+    NCCLCHECK(ncclCudaFree(gpu_event_buffers_[i]));
   }
   free(gpu_event_buffers_);
-  CUDACHECK(cudaFree(gpu_collect_contexts_));
+  NCCLCHECK(ncclCudaFree(gpu_collect_contexts_));
 
   // Free timestamp
   NCCLCHECK(ncclCudaHostFree(cpu_timestamp_));
