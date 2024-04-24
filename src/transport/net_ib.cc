@@ -1317,6 +1317,10 @@ ncclResult_t ncclIbPostFifo(struct ncclIbRecvComm* comm, int n, void** data, int
     localElem[i].wr_id = req - comm->verbs.reqs;
   }
 
+  req->recv.fifoSlot = slot;
+  req->recv.fifoPtr = localElem;
+  req->recv.fifoPosted = false;
+
   if (ncclIbDevs[comm->verbs.dev].disabled)
   {
     comm->remFifo.fifoTail++;
@@ -1331,9 +1335,6 @@ ncclResult_t ncclIbPostFifo(struct ncclIbRecvComm* comm, int n, void** data, int
   wr.num_sge = 1;
   wr.opcode = IBV_WR_RDMA_WRITE;
   wr.send_flags = comm->remFifo.flags; // IBV_SEND_INLINE
-  req->recv.fifoSlot = slot;
-  req->recv.fifoPtr = localElem;
-  req->recv.fifoPosted = false;
 
   // We need to occasionally post a request with the IBV_SEND_SIGNALED flag, otherwise
   // the send queue will never empty.
