@@ -25,6 +25,8 @@
 
 #include "ibvwrap.h"
 
+using namespace std::chrono;
+
 #define MAXNAMESIZE 64
 static char ncclIbIfName[MAX_IF_NAME_SIZE+1];
 static union ncclSocketAddress ncclIbIfAddr;
@@ -32,7 +34,7 @@ static bool resilientDaemonRunning = false;
 static bool usingSocket = false;
 NCCL_PARAM(ResilientEnabled, "RESILIENT_ENABLED", 0);
 NCCL_PARAM(ResilientCheckInterval, "RESILIENT_CHECK_INTERVAL", 5);
-NCCL_PARAM(IbSendTimeout, "IB_SEND_TIMEOUT", 20);
+NCCL_PARAM(IbSendTimeout, "IB_SEND_TIMEOUT", 1);
 
 struct ncclIbMr {
   uintptr_t addr;
@@ -102,9 +104,9 @@ static void* ncclIbAsyncThreadMain(void* args) {
       if (strcmp(str, "local catastrophic error") == 0) {
         WARN("NET/IB : Detect Nic failure, will repair soon, event type: %d", event.event_type);
         for (int d=0; d<ncclNIbDevs; d++) {
-          if (strcmp(context->device->dev_name, ncclIbDevs[d].devName) == 0)
+          if (strcmp(context->device->name, ncclIbDevs[d].devName) == 0)
           {
-            INFO(NCCL_NET, "NET/IB : Disable the ib device:%s, will use socket for data transmission temperately", context->device->dev_name);
+            WARN("NET/IB : Disable the ib device id:%d, name:%s, will use socket for data transmission temperately", d, context->device->name);
             ncclIbDevs[d].disabled = true;
           }
         }
@@ -452,7 +454,7 @@ struct ncclIbRequest {
       bool fifoPosted;
     } recv;
   };
-  std::chrono::time_point<std::chrono::steady_clock> submitTime;
+  time_point<steady_clock> submitTime;
 };
 
 struct ncclIbVerbs {
@@ -728,8 +730,6 @@ ncclResult_t ncclIbConnect(int dev, void* opaqueHandle, void** sendComm, ncclNet
   struct ncclIbSendComm* comm = (struct ncclIbSendComm*)stage->comm;
   int ready;
   *sendComm = NULL;
-  
-  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbConnect state: %d", stage->state);
 
   if (stage->state == ncclIbCommStateConnect)    goto ib_connect_check;
   if (stage->state == ncclIbCommStateSend)       goto ib_send;
@@ -745,8 +745,6 @@ ncclResult_t ncclIbConnect(int dev, void* opaqueHandle, void** sendComm, ncclNet
   stage->comm = comm;
   stage->state = ncclIbCommStateConnect;
   NCCLCHECK(ncclSocketConnect(&comm->sock));
-  char addrline[SOCKET_NAME_MAXLEN+1];
-  INFO(NCCL_INIT|NCCL_NET, "NET/IB : Ib Connecting to %s", ncclSocketToString(&handle->connectAddr, addrline));
 
 ib_connect_check:
   /* since ncclSocketConnect is async, we must check if connection is complete */
@@ -869,7 +867,6 @@ ncclResult_t ncclIbAccept(void* listenComm, void** recvComm, ncclNetDeviceHandle
   struct ncclIbRecvComm* rComm = (struct ncclIbRecvComm*)stage->comm;
   int ready;
   *recvComm = NULL;
-  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbAccept state: %d", stage->state);
 
   if (stage->state == ncclIbCommStateAccept) goto ib_accept_check;
   if (stage->state == ncclIbCommStateRecv) goto ib_recv;
@@ -885,8 +882,6 @@ ncclResult_t ncclIbAccept(void* listenComm, void** recvComm, ncclNetDeviceHandle
   stage->state = ncclIbCommStateAccept;
   NCCLCHECK(ncclSocketInit(&rComm->sock));
   NCCLCHECK(ncclSocketAccept(&rComm->sock, &lComm->sock));
-  char addrline2[SOCKET_NAME_MAXLEN+1];
-  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbAccept (receive socket addr): %s", ncclSocketToString(&rComm->sock.addr, addrline2));
 
 ib_accept_check:
   NCCLCHECK(ncclSocketReady(&rComm->sock, &ready));
@@ -999,10 +994,6 @@ ib_recv_ready:
   NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_RECV,  &rComm->sock, &rComm->ready, sizeof(int), &stage->offset));
   if (stage->offset != sizeof(int)) return ncclSuccess;
 
-  char addrline3[SOCKET_NAME_MAXLEN+1];
-  char addrline4[SOCKET_NAME_MAXLEN+1];
-  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbAccept (listen socket addr): %s, state: %d, (receive socket addr): %s", ncclSocketToString(&lComm->sock.addr, addrline3), lComm->sock.state, ncclSocketToString(&rComm->sock.addr, addrline4));
-
   if (ncclParamResilientEnabled()){
     pthread_t socketReceiverDaemonthread; 
     pthread_create(&socketReceiverDaemonthread, NULL, ncclIbSocketReceiverDaemon, rComm);
@@ -1027,7 +1018,7 @@ ncclResult_t ncclIbGetRequest(struct ncclIbVerbs* verbs, struct ncclIbRequest** 
       r->events = 1;
       r->sock = NULL;
       r->gidInfo = NULL;
-      r->submitTime = std::chrono::steady_clock::now();
+      r->submitTime = steady_clock::now();
       *req = r;
       return ncclSuccess;
     }
@@ -1367,6 +1358,9 @@ ncclResult_t ncclIbPostFifo(struct ncclIbRecvComm* comm, int n, void** data, int
   NCCLCHECK(wrap_ibv_post_send(comm->qps[0], &wr, &bad_wr));
   comm->remFifo.fifoTail++;
 
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : Post fifo complete, fifoTail:%ld", comm->remFifo.fifoTail);
+
+
   return ncclSuccess;
 }
 
@@ -1377,7 +1371,7 @@ ncclResult_t ncclIbIrecv(void* recvComm, int n, void** data, int* sizes, int* ta
   if (n > NCCL_NET_IB_MAX_RECVS) return ncclInternalError;
 
   char addrline[SOCKET_NAME_MAXLEN+1];
-  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbIrecv (socket addr): %s", ncclSocketToString(&comm->sock.addr, addrline));
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : ncclIbIrecv (socket addr): %s, ncclIbDevs[comm->verbs.dev].disabled=%d", ncclSocketToString(&comm->sock.addr, addrline), ncclIbDevs[comm->verbs.dev].disabled);
 
   struct ncclIbRequest* req;
   NCCLCHECK(ncclIbGetRequest(&comm->verbs, &req));
@@ -1527,7 +1521,7 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
       NCCLCHECK(wrap_ibv_poll_cq(r->verbs->cq, 4, wcs, &wrDone));
       if (wrDone == 0) { TIME_CANCEL(3); } else { TIME_STOP(3); }
       if (wrDone == 0){
-        if (std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - r->submitTime).count() >= ncclParamIbSendTimeout())
+        if (duration_cast<seconds>(steady_clock::now() - r->submitTime).count() >= ncclParamIbSendTimeout())
         {
           // if receive timeout, we will receive all the data using socket.
           ncclIbDevs[r->verbs->dev].disabled = true;
