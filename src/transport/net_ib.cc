@@ -103,7 +103,7 @@ static void* ncclIbAsyncThreadMain(void* args) {
       if (strcmp(str, "local catastrophic error") == 0) {
         WARN("NET/IB : Detect Nic failure, will repair soon, event type: %d", event.event_type);
         for (int d=0; d<ncclNIbDevs; d++) {
-          if (strcmp(context->device->name, ncclIbDevs[d].devName) == 0)
+          if (strcmp(context->device->name, ncclIbDevs[d].devName) == 0 && ncclParamResilientEnabled())
           {
             WARN("NET/IB : Disable the ib device id:%d, name:%s, will use socket for data transmission temperately", d, context->device->name);
             ncclIbDevs[d].disabled = true;
@@ -423,7 +423,6 @@ struct ncclIbGidInfo {
 #define NCCL_NET_IB_REQ_SEND 1
 #define NCCL_NET_IB_REQ_RECV 2
 #define NCCL_NET_IB_REQ_FLUSH 3
-
 const char* reqTypeStr[] = { "Unused", "Send", "Recv", "Flush" };
 
 struct ncclIbRequest {
@@ -749,9 +748,6 @@ ncclResult_t ncclIbListen(int dev, void* opaqueHandle, void** listenComm) {
   NCCLCHECK(ncclSocketListen(&comm->sock));
   NCCLCHECK(ncclSocketGetAddr(&comm->sock, &handle->connectAddr));
   *listenComm = comm;
-  char addrline[SOCKET_NAME_MAXLEN+1];
-  INFO(NCCL_INIT|NCCL_NET, "NET/IB : Ib Listening on %s", ncclSocketToString(&comm->sock.addr, addrline));
-
   return ncclSuccess;
 }
 
@@ -1303,7 +1299,7 @@ ncclResult_t ncclIbIsend(void* sendComm, void* data, int size, int tag, void* mh
     for (int r=0; r<nreqs; r++) {
       if (reqs[r] == NULL) return ncclSuccess;
     }
-    //WARN("NET/IB : ncclIbIsend been called, data:%x, size:%d \n", *(unsigned int*)data, size);
+
     TIME_START(0);
     if (!ncclIbDevs[comm->verbs.dev].disabled && ncclParamResilientEnabled())
     {
@@ -1408,7 +1404,7 @@ ncclResult_t ncclIbIrecv(void* recvComm, int n, void** data, int* sizes, int* ta
   if (comm->gidInfo.link_layer == IBV_LINK_LAYER_ETHERNET) req->gidInfo = &comm->gidInfo;
   for (int i=0; i<n; i++) req->recv.sizes[i] = 0;
 
-  if (!ncclIbDevs[comm->verbs.dev].disabled && ncclParamResilientEnabled())
+  if (!ncclIbDevs[comm->verbs.dev].disabled)
   {
     struct ibv_recv_wr wr;
     memset(&wr, 0, sizeof(wr));
@@ -1569,7 +1565,7 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
   while (1) {
     if (r->events == 0) {
       *done = 1;
-      if (sizes && (r->type == NCCL_NET_IB_REQ_RECV)) {
+      if (sizes && r->type == NCCL_NET_IB_REQ_RECV) {
         for (int i=0; i<r->nreqs; i++) sizes[i] = r->recv.sizes[i];
       }
       INFO(NCCL_NET, "NET/IB : complete Request:%ld, type:%d", r-r->verbs->reqs, r->type);
@@ -1577,7 +1573,7 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
       return ncclSuccess;
     }
 
-    if (ncclIbDevs[r->verbs->dev].disabled && ncclParamResilientEnabled()) 
+    if (ncclIbDevs[r->verbs->dev].disabled) 
     {
       NCCLCHECK(ncclNetSocketTest(request));
     }
@@ -1605,8 +1601,6 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
           char line[SOCKET_NAME_MAXLEN+1];
           union ncclSocketAddress addr;
           ncclSocketGetAddr(r->sock, &addr);
-          char addrline[SOCKET_NAME_MAXLEN+1];
-          INFO(NCCL_INIT|NCCL_NET, "NET/IB : Ib Test on %s", ncclSocketToString(&r->sock->addr, addrline));
           char localGidString[INET6_ADDRSTRLEN] = "";
           char remoteGidString[INET6_ADDRSTRLEN] = "";
           const char* localGidStr = NULL, *remoteGidStr = NULL;
