@@ -1613,13 +1613,12 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
       NCCLCHECK(wrap_ibv_poll_cq(r->verbs->cq, 4, wcs, &wrDone));
       if (wrDone == 0) { TIME_CANCEL(3); } else { TIME_STOP(3); }
       if (wrDone == 0){
-        if ((duration_cast<nanoseconds>(steady_clock::now() - r->submitTime).count() >= ncclParamIbSendTimeout()) && ncclParamResilientEnabled())
+        if ((duration_cast<seconds>(steady_clock::now() - r->submitTime).count() >= ncclParamIbSendTimeout()) && ncclParamResilientEnabled())
         {
           if (r->type == NCCL_NET_IB_REQ_RECV)
           {
             // if receive timeout, we will receive all the data using socket.
-            //WARN("NET/IB : detect timeout for request:%ld, type: %d, dev id:%d, dev name:%s, will use socket to transmit data for this dev id", r-r->verbs->reqs, r->type, r->verbs->dev, ncclIbDevs[r->verbs->dev].devName);
-            INFO(NCCL_NET, "NET/IB : detect timeout for request:%ld, type: %d, dev id:%d, dev name:%s, will use socket to transmit data for this dev id", r-r->verbs->reqs, r->type, r->verbs->dev, ncclIbDevs[r->verbs->dev].devName);
+            WARN("NET/IB : detect timeout for request:%ld, type: %d, dev id:%d, dev name:%s, will use socket to transmit data for this dev id", r-r->verbs->reqs, r->type, r->verbs->dev, ncclIbDevs[r->verbs->dev].devName);
             pthread_mutex_lock(&ncclIbDevs[r->verbs->dev].lock);
             ncclIbDevs[r->verbs->dev].disabled = true;
             pthread_mutex_unlock(&ncclIbDevs[r->verbs->dev].lock);
