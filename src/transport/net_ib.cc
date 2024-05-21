@@ -102,23 +102,7 @@ static void* ncclIbAsyncThreadMain(void* args) {
     if (ncclSuccess != wrap_ibv_event_type_str(&str, event.event_type)) { break; }
     if (event.event_type != IBV_EVENT_COMM_EST)
     {
-      if (strcmp(str, "local catastrophic error") == 0) {
-        WARN("NET/IB : Detect Nic failure, will repair soon, event type: %d", event.event_type);
-        for (int d=0; d<ncclNIbDevs; d++) {
-          if (strcmp(context->device->name, ncclIbDevs[d].devName) == 0 && ncclParamResilientEnabled())
-          {
-            WARN("NET/IB : Disable the ib device id:%d, name:%s, will use socket for data transmission temperately", d, context->device->name);
-            pthread_mutex_lock(&ncclIbDevs[d].lock);
-            ncclIbDevs[d].disabled = true;
-            pthread_mutex_unlock(&ncclIbDevs[d].lock);
-          }
-        }
-        usingSocket = true;
-      }
-      else
-      {
-        WARN("NET/IB : Got async event : %s, event type: %d", str, event.event_type);
-      }
+      WARN("NET/IB : Got async event : %s, event type: %d", str, event.event_type);
     }
     if (ncclSuccess != wrap_ibv_ack_async_event(&event)) { break; }
   }
@@ -538,6 +522,23 @@ static_assert((offsetof(struct ncclIbRecvComm, remFifo) % 32) == 0, "ncclIbSendC
 
 NCCL_PARAM(IbQpsPerConn, "IB_QPS_PER_CONNECTION", 1);
 
+void disableIb(int dev)
+{
+  if (ncclParamResilientEnabled() && !ncclIbDevs[dev].disabled)
+  {
+    pthread_mutex_lock(&ncclIbDevs[dev].lock);
+    ncclIbDevs[dev].disabled = true;
+    usingSocket = true;
+    WARN("NET/IB : Disable the ib device id:%d, dev name:%s, will use socket for data transmission temperately", dev, ncclIbDevs[dev].devName);
+    pthread_mutex_unlock(&ncclIbDevs[dev].lock);
+  }
+}
+
+bool getIbDisableStatus(int dev)
+{
+  return ncclIbDevs[dev].disabled;
+}
+
 void* ncclIbSocketReceiverDaemon(void* _args) {
   struct ncclIbRecvComm* rComm = (struct ncclIbRecvComm*)_args;
 
@@ -564,9 +565,7 @@ void* ncclIbSocketReceiverDaemon(void* _args) {
     else if (closed || nRet != ncclSuccess) break;
     INFO(NCCL_NET, "NET/IB : Receive slotid:%d from the sender, closed flag:%d nRet:%d", slot, closed, nRet);
     
-    pthread_mutex_lock(&ncclIbDevs[rComm->verbs.dev].lock);
-    ncclIbDevs[rComm->verbs.dev].disabled = true;
-    pthread_mutex_unlock(&ncclIbDevs[rComm->verbs.dev].lock);
+    disableIb(rComm->verbs.dev);
 
     // 2. receive the id in slot for multi receive request
     offset = 0;
@@ -650,9 +649,7 @@ void* ncclIbSocketSenderDaemon(void* _args) {
     else if (closed || nRet != ncclSuccess) break;
     INFO(NCCL_NET, "NET/IB : Receive fifo slotid:%d from the sender, closed flag:%d nRet:%d", slot, closed, nRet);
     // 2. receive the receive request count
-    pthread_mutex_lock(&ncclIbDevs[sComm->verbs.dev].lock);
-    ncclIbDevs[sComm->verbs.dev].disabled = true;
-    pthread_mutex_unlock(&ncclIbDevs[sComm->verbs.dev].lock);
+    disableIb(sComm->verbs.dev);
     offset = 0;
     while (offset < sizeof(int)) ncclSocketProgress(NCCL_SOCKET_RECV, &sComm->sock, &n, sizeof(int), &offset);
     INFO(NCCL_NET, "NET/IB : received request count:%d offset:%d expected to receive:%ld", n, offset, sizeof(int));
@@ -1252,7 +1249,12 @@ ncclResult_t ncclIbMultiSend(struct ncclIbSendComm* comm, int slot) {
     }
     struct ibv_send_wr* bad_wr;
     ncclResult_t nRet = wrap_ibv_post_send(comm->qps[comm->qpIndex], comm->wrs, &bad_wr);
-    if (nRet != ncclSuccess) return ncclSuccess;
+    if (nRet != ncclSuccess)
+    {
+      // in resilient mode, if post send failed, just return with success, and using timeout logic to handle resend
+      if (ncclParamResilientEnabled())  return ncclSuccess;
+      return nRet;
+    }
     
     comm->qpIndex = (comm->qpIndex+1)%comm->nqps;
 
@@ -1324,7 +1326,7 @@ ncclResult_t ncclIbIsend(void* sendComm, void* data, int size, int tag, void* mh
     req->events = ncclParamIbSplitDataOnQps() ? comm->nqps : 1;
     if (comm->gidInfo.link_layer == IBV_LINK_LAYER_ETHERNET) req->gidInfo = &comm->gidInfo;
     *request = reqs[r] = req;
-    INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d data size:%d", req-req->verbs->reqs, req->type, size);
+    // INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d data size:%d dev:%d", req-req->verbs->reqs, req->type, size, comm->verbs.dev);
 
     // If this is a multi-recv, send only when all requests have matched.
     for (int r=0; r<nreqs; r++) {
@@ -1332,7 +1334,7 @@ ncclResult_t ncclIbIsend(void* sendComm, void* data, int size, int tag, void* mh
     }
 
     TIME_START(0);
-    if (!ncclIbDevs[comm->verbs.dev].disabled)
+    if (!getIbDisableStatus(comm->verbs.dev))
     {
       NCCLCHECK(ncclIbMultiSend(comm, slot));
     } 
@@ -1372,8 +1374,9 @@ ncclResult_t ncclIbPostFifo(struct ncclIbRecvComm* comm, int n, void** data, int
   req->recv.fifoPtr = localElem;
   req->recv.fifoPosted = false;
   
-  if (ncclIbDevs[comm->verbs.dev].disabled)
+  if (getIbDisableStatus(comm->verbs.dev))
   {
+    // we need to increase the fifoTail counter because in normal case it will increase once post the flag complete. 
     comm->remFifo.fifoTail++;
     return ncclSuccess;
   } 
@@ -1416,7 +1419,15 @@ ncclResult_t ncclIbPostFifo(struct ncclIbRecvComm* comm, int n, void** data, int
 
   struct ibv_send_wr* bad_wr;
   ncclResult_t nRet = wrap_ibv_post_send(comm->qps[0], &wr, &bad_wr);
-  if (nRet != ncclSuccess) return ncclSuccess;
+  if (nRet != ncclSuccess)
+  {
+    // in resilient mode, if post send failed, just return with success, and using timeout logic to handle resend
+    if (ncclParamResilientEnabled())  {
+      comm->remFifo.fifoTail++;
+      return ncclSuccess;
+    }
+    return nRet;
+  }
 
   comm->remFifo.fifoTail++;
 
@@ -1434,11 +1445,11 @@ ncclResult_t ncclIbIrecv(void* recvComm, int n, void** data, int* sizes, int* ta
   req->type = NCCL_NET_IB_REQ_RECV;
   req->sock = &comm->sock;
   req->nreqs = n;
-  INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d nreqs:%d data size:%d dev:%d", req-req->verbs->reqs, req->type, req->nreqs, sizes[0], comm->verbs.dev);
+  // INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d nreqs:%d data size:%d dev:%d", req-req->verbs->reqs, req->type, req->nreqs, sizes[0], comm->verbs.dev);
   if (comm->gidInfo.link_layer == IBV_LINK_LAYER_ETHERNET) req->gidInfo = &comm->gidInfo;
   for (int i=0; i<n; i++) req->recv.sizes[i] = 0;
 
-  if (!ncclIbDevs[comm->verbs.dev].disabled)
+  if (!getIbDisableStatus(comm->verbs.dev))
   {
     struct ibv_recv_wr wr;
     memset(&wr, 0, sizeof(wr));
@@ -1453,7 +1464,16 @@ ncclResult_t ncclIbIrecv(void* recvComm, int n, void** data, int* sizes, int* ta
       struct ibv_qp* qp = comm->qps[comm->qpIndex];
       struct ibv_recv_wr* bad_wr;
       ncclResult_t nRet = wrap_ibv_post_recv(qp, &wr, &bad_wr);
-      if (nRet != ncclSuccess) return ncclSuccess;
+      if (nRet != ncclSuccess)
+      {
+        // in resilient mode, if post receive failed, just return with success, and using timeout logic to handle receive
+        if (ncclParamResilientEnabled())  
+        {
+          comm->remFifo.fifoTail++;
+          return ncclSuccess;
+        }
+        return nRet;
+      }
       comm->qpIndex = (comm->qpIndex+1)%comm->nqps;
     }
     TIME_STOP(1);
@@ -1599,12 +1619,12 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
       if (sizes && r->type == NCCL_NET_IB_REQ_RECV) {
         for (int i=0; i<r->nreqs; i++) sizes[i] = r->recv.sizes[i];
       }
-      INFO(NCCL_NET, "NET/IB : complete Request:%ld, type:%d", r-r->verbs->reqs, r->type);
+      // INFO(NCCL_NET, "NET/IB : complete Request:%ld, type:%d", r-r->verbs->reqs, r->type);
       NCCLCHECK(ncclIbFreeRequest(r));
       return ncclSuccess;
     }
 
-    if (ncclIbDevs[r->verbs->dev].disabled) 
+    if (getIbDisableStatus(r->verbs->dev)) 
     {
       NCCLCHECK(ncclNetSocketTest(request));
       return ncclSuccess;
@@ -1619,12 +1639,10 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
       if (wrDone == 0){
         if ((duration_cast<seconds>(steady_clock::now() - r->submitTime).count() >= ncclParamIbSendTimeout()) && ncclParamResilientEnabled())
         {
-            // if receive timeout, we will receive all the data using socket.
-            WARN("NET/IB : detect timeout for request:%ld, type: %d, dev id:%d, dev name:%s, will use socket to transmit data for this dev id", r-r->verbs->reqs, r->type, r->verbs->dev, ncclIbDevs[r->verbs->dev].devName);
-            pthread_mutex_lock(&ncclIbDevs[r->verbs->dev].lock);
-            ncclIbDevs[r->verbs->dev].disabled = true;
-            pthread_mutex_unlock(&ncclIbDevs[r->verbs->dev].lock);
-            NCCLCHECK(ncclNetSocketTest(request));
+          // if receive timeout, we will receive all the data using socket.
+          WARN("NET/IB : detect timeout for request:%ld, type: %d, dev id:%d, dev name:%s, will use socket to transmit data for this dev id", r-r->verbs->reqs, r->type, r->verbs->dev, ncclIbDevs[r->verbs->dev].devName);
+          disableIb(r->verbs->dev);
+          NCCLCHECK(ncclNetSocketTest(request));
         }
         return ncclSuccess;
       }
@@ -1649,9 +1667,7 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
           {
             WARN("NET/IB : detect ib issue for request:%ld, type: %d, dev id:%d, dev name:%s will use socket to transmit data for this dev id", r-r->verbs->reqs, r->type, r->verbs->dev, ncclIbDevs[r->verbs->dev].devName);
             // if resilient enabled, just quit and will using timeout logic for the message resend using socket
-            pthread_mutex_lock(&ncclIbDevs[r->verbs->dev].lock);
-            ncclIbDevs[r->verbs->dev].disabled = true;
-            pthread_mutex_unlock(&ncclIbDevs[r->verbs->dev].lock);
+            disableIb(r->verbs->dev);
             NCCLCHECK(ncclNetSocketTest(request));
             return ncclSuccess;
           }
