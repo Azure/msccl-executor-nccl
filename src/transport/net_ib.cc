@@ -13,6 +13,7 @@
 #include "param.h"
 
 #include <assert.h>
+#include <atomic>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -20,14 +21,24 @@
 #include <poll.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <unordered_set>
 #define ENABLE_TIMER 0
 #include "timer.h"
 
 #include "ibvwrap.h"
 
+using namespace std::chrono;
+
 #define MAXNAMESIZE 64
 static char ncclIbIfName[MAX_IF_NAME_SIZE+1];
 static union ncclSocketAddress ncclIbIfAddr;
+static bool usingSocket = false;
+std::atomic<bool> stop(false);
+NCCL_PARAM(ResilientEnabled, "RESILIENT_ENABLED", 0);
+NCCL_PARAM(ResilientCheckInterval, "RESILIENT_CHECK_INTERVAL", 50);
+NCCL_PARAM(IbSendTimeout, "IB_SEND_TIMEOUT", 5);
+
+static bool btimeout=true;
 
 struct ncclIbMr {
   uintptr_t addr;
@@ -58,6 +69,7 @@ struct alignas(64) ncclIbDev {
   int maxQp;
   struct ncclIbMrCache mrCache;
   int ar; // ADAPTIVE_ROUTING
+  bool disabled;
 };
 
 #define MAX_IB_PORT 15
@@ -92,7 +104,9 @@ static void* ncclIbAsyncThreadMain(void* args) {
     char *str;
     if (ncclSuccess != wrap_ibv_event_type_str(&str, event.event_type)) { break; }
     if (event.event_type != IBV_EVENT_COMM_EST)
-      WARN("NET/IB : Got async event : %s", str);
+    {
+      WARN("NET/IB : Got async event : %s, event type: %d", str, event.event_type);
+    }
     if (ncclSuccess != wrap_ibv_ack_async_event(&event)) { break; }
   }
   return NULL;
@@ -232,6 +246,7 @@ ncclResult_t ncclIbInit(ncclDebugLogger_t logFunction) {
           ncclIbDevs[ncclNIbDevs].mrCache.capacity = 0;
           ncclIbDevs[ncclNIbDevs].mrCache.population = 0;
           ncclIbDevs[ncclNIbDevs].mrCache.slots = NULL;
+          ncclIbDevs[ncclNIbDevs].disabled = false;
 
           // Enable ADAPTIVE_ROUTING by default on IB networks
           // But allow it to be overloaded by an env parameter
@@ -406,6 +421,7 @@ struct ncclIbRequest {
   int type;
   int events;
   struct ncclSocket* sock;
+  std::string addr;
   struct ncclIbGidInfo* gidInfo;
   int nreqs;
   union {
@@ -414,11 +430,19 @@ struct ncclIbRequest {
       void* data;
       uint32_t lkey;
       int offset;
+      uint32_t tag;
+      int fifoSlot;
+      int r;
+      uint64_t wr_id;
     } send;
     struct {
       int sizes[NCCL_NET_IB_MAX_RECVS];
+      int fifoSlot;
+      struct ncclIbSendFifo *fifoPtr;
+      bool fifoPosted;
     } recv;
   };
+  time_point<steady_clock> submitTime;
 };
 
 struct ncclIbVerbs {
@@ -442,6 +466,8 @@ struct ncclIbSendFifo {
   uint32_t nreqs;
   uint32_t tag;
   uint64_t idx;
+  uint64_t wr_id;
+  char     padding[24];  
 };
 
 struct ncclIbSendComm {
@@ -452,6 +478,7 @@ struct ncclIbSendComm {
   struct ibv_send_wr wrs[NCCL_NET_IB_MAX_RECVS+1];
   struct ibv_sge sges[NCCL_NET_IB_MAX_RECVS];
   struct ncclSocket sock;
+  std::string addr;
 
   int ready;
   struct ibv_qp* qps[NCCL_IB_MAX_QPS];
@@ -489,6 +516,7 @@ struct ncclIbRecvComm {
   struct ncclIbVerbs verbs;
   struct ncclIbRemFifo remFifo;
   struct ncclSocket sock;
+  std::string addr;
   int ready;
   struct ibv_qp* qps[NCCL_IB_MAX_QPS];
   int nqps;
@@ -499,6 +527,236 @@ struct ncclIbRecvComm {
 static_assert((offsetof(struct ncclIbRecvComm, remFifo) % 32) == 0, "ncclIbSendComm fifo must be 32-byte aligned");
 
 NCCL_PARAM(IbQpsPerConn, "IB_QPS_PER_CONNECTION", 1);
+
+std::unordered_set<std::string> disabledIbPeer;
+void disableIb(std::string peerAddr)
+{
+  if (ncclParamResilientEnabled() && (disabledIbPeer.find(peerAddr) == disabledIbPeer.end()))
+  {
+    disabledIbPeer.insert(peerAddr);
+    usingSocket = true;
+    WARN("NET/IB : Disable the ib peer:%s will use socket for data transmission temperately", peerAddr.c_str());
+  }
+}
+
+bool getIbDisableStatus(std::string peerAddr)
+{
+  return disabledIbPeer.find(peerAddr) != disabledIbPeer.end();
+}
+
+ncclResult_t ncclNetSocketTest(void* request) {
+  struct ncclIbRequest *r = (struct ncclIbRequest*)request;
+  int offset = 0;
+
+  switch (r->type)
+  {
+    case NCCL_NET_IB_REQ_SEND:
+    {
+      // reset the events to correct it for socket transport.
+      r->events = 1;
+
+      void* host_data = NULL;
+      // send the data to the receiver, let the receiver to decide to adopt it or not and the ncclIbSocketReceiverDaemon will been used to receive the data from sender.
+      // 1. send the fifoslot id
+      while (offset < sizeof(int)) NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_SEND, r->sock, &r->send.fifoSlot, sizeof(int), &offset));
+      //INFO(NCCL_NET, "NET/IB : start to send the fifo slot id:%d, offset:%d, expected to send:%ld", r->send.fifoSlot, offset, sizeof(int));
+      // 2. send the id in slot for multi receive request
+      offset = 0;
+      while (offset < sizeof(int)) NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_SEND, r->sock, &r->send.r, sizeof(int), &offset));
+      //INFO(NCCL_NET, "NET/IB : finish send the request id:%d in the fifo slot:%d, offset:%d, expected to send:%ld:", r->send.r, r->send.fifoSlot, offset, sizeof(int));
+      // 3. send the data size
+      offset = 0;
+      while (offset < sizeof(int)) NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_SEND, r->sock, &r->send.size, sizeof(int), &offset));
+      //INFO(NCCL_NET, "NET/IB : finish send the data size:%d, offset:%d, expected to send:%ld", r->send.size, offset, sizeof(int));
+      // 4. send the data
+      offset = 0;
+
+      if(r->send.size > 0)
+      {
+        struct cudaPointerAttributes attributes;
+        CUDACHECK(cudaPointerGetAttributes(&attributes, r->send.data));
+        if (attributes.type == cudaMemoryTypeDevice)
+        {
+          INFO(NCCL_NET, "NET/IB : ncclNetSocketTest detect the send memory is GPU memory, will copy to CPU memory for socket transfering \n");
+          host_data = malloc(r->send.size);
+          cudaMemcpy(host_data, r->send.data, r->send.size, cudaMemcpyDeviceToHost);
+        }
+        else
+        {
+          host_data = r->send.data;
+        }
+        while (offset < r->send.size) NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_SEND, r->sock, host_data, r->send.size, &offset));
+        //INFO(NCCL_NET, "NET/IB : finish send the data:%x, offset:%d, expected to send:%d", *(unsigned int*)r->send.data, offset, r->send.size);
+        if(attributes.type == cudaMemoryTypeDevice) free(host_data);
+      }
+
+      // 5. send the wr_id
+      //INFO(NCCL_NET, "NET/IB : start to send the wr_id:%ld", r->send.wr_id);
+      offset = 0;
+      while (offset < sizeof(uint64_t)) NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_SEND, r->sock, &r->send.wr_id, sizeof(uint64_t), &offset));
+      
+      r->events=0;
+
+      INFO(NCCL_NET,"NET/IB : complete send the data, events:%d", r->events);
+      break;
+    }
+    case NCCL_NET_IB_REQ_RECV:
+    {
+      if (!r->recv.fifoPosted)
+      {
+        // reset the events to correct it for socket transport.
+        r->events = r->nreqs;
+        // send the fifo info to the sender, let the sender decide to adopt it or not and the ncclIbSocketSenderDaemon will been used to receive the data from the receiver.
+        // 1. send the fifoslot id
+        while (offset < sizeof(int)) NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_SEND, r->sock, &r->recv.fifoSlot, sizeof(int), &offset));
+        //INFO(NCCL_NET, "NET/IB : finish send the fifoSlot id:%d, offset:%d, expected to send:%ld from dev:%d", r->recv.fifoSlot, offset, sizeof(int), r->verbs->dev);
+        // 2. send the receive request count
+        offset = 0;
+        while (offset < sizeof(int)) NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_SEND, r->sock, &r->nreqs, sizeof(int), &offset));
+        //INFO(NCCL_NET, "NET/IB : finish send the request counts:%d in the fifoSlot, offset:%d, expected to send:%ld", r->nreqs, offset, sizeof(int));
+        // 3. send the fifo elements
+        offset = 0;
+        while (offset < r->nreqs * sizeof(struct ncclIbSendFifo)) NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_SEND, r->sock, (void*)r->recv.fifoPtr, r->nreqs * sizeof(struct ncclIbSendFifo), &offset));
+        //INFO(NCCL_NET, "NET/IB : finish send the fifo elements:%x offset:%d, expected to send:%ld", *(unsigned int*)r->recv.fifoPtr, offset, r->nreqs * sizeof(struct ncclIbSendFifo));
+        r->recv.fifoPosted = true;
+
+        INFO(NCCL_NET,"NET/IB : fifo already posted, events:%d", r->events);
+
+      }
+      break;
+    }
+    default:
+      return ncclInvalidArgument;
+  }
+  return ncclSuccess;
+}
+
+void* ncclIbSocketReceiverDaemon(void* _args) {
+  struct ncclIbRecvComm* rComm = (struct ncclIbRecvComm*)_args;
+
+  char addrline[SOCKET_NAME_MAXLEN+1];
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : Enter into ncclIbSocketReceiverDaemon addr:%s dev:%d", ncclSocketToString(&rComm->sock.addr, addrline), rComm->verbs.dev);
+
+  while(!stop.load())
+  { 
+    int slot = 0;
+    int id = 0;
+    int size = 0;
+    int wr_id = 0;
+    int closed;
+    int offset = 0;
+    void* host_data = NULL;
+
+    // 1. receive the fifoslot id
+    ncclResult_t nRet = ncclSocketTryRecv(&rComm->sock, &slot, sizeof(int), &closed, false);
+    if (nRet == ncclInProgress)
+    {
+      usleep(ncclParamResilientCheckInterval());
+      continue;
+    }
+    else if (closed || nRet != ncclSuccess) break;
+    //INFO(NCCL_NET, "NET/IB : Receive slotid:%d from the sender, closed flag:%d nRet:%d", slot, closed, nRet);
+    
+    disableIb(rComm->addr);
+
+    // 2. receive the id in slot for multi receive request
+    offset = 0;
+    while (offset < sizeof(int)) ncclSocketProgress(NCCL_SOCKET_RECV, &rComm->sock, &id, sizeof(int), &offset);
+    //INFO(NCCL_NET, "NET/IB : Receive request id: %d in slot: %d from the sender, offset:%d, expected to receive:%ld", id, slot, offset, sizeof(int));
+    // 3. receive the data size
+    offset = 0;
+    while (offset < sizeof(int)) ncclSocketProgress(NCCL_SOCKET_RECV, &rComm->sock, &size, sizeof(int), &offset);
+    //INFO(NCCL_NET, "NET/IB : Receive data size: %d from the sender, offset:%d, expected to receive:%ld", size, offset, sizeof(int));
+    // 4. receive the data
+    offset = 0;
+    if (size > 0)
+    {
+      struct cudaPointerAttributes attributes;
+      cudaError_t err = cudaPointerGetAttributes(&attributes, (void*)(uintptr_t)rComm->remFifo.elems[slot][id].addr);
+      if (err != cudaSuccess) {
+        WARN("%ld is not a valid pointer", rComm->remFifo.elems[slot][id].addr);
+        continue;
+      }
+      else if (attributes.type == cudaMemoryTypeDevice)
+      {
+        INFO(NCCL_NET, "NET/IB : ncclNetSocketTest detect the receive memory is GPU memory, will use CPU memory to receive the data for socket transfering \n");
+        host_data = malloc(size);
+      }
+      else
+      {
+        host_data = (void*)(uintptr_t)rComm->remFifo.elems[slot][id].addr;
+      }
+
+      while (offset < size) ncclSocketProgress(NCCL_SOCKET_RECV, &rComm->sock, host_data, size, &offset);
+      //INFO(NCCL_NET, "NET/IB : Receive data:%x from the sender, offset:%d, expected to receive:%d", *(unsigned int*)host_data, offset, size);
+      if(attributes.type == cudaMemoryTypeDevice){
+        cudaMemcpy((void*)(uintptr_t)rComm->remFifo.elems[slot][id].addr, host_data, size, cudaMemcpyHostToDevice);
+        free(host_data);
+      }
+    }
+    
+    // 5. receive the wr_id
+    offset = 0;
+    while (offset < sizeof(uint64_t)) ncclSocketProgress(NCCL_SOCKET_RECV, &rComm->sock, &wr_id, sizeof(uint64_t), &offset);
+    //INFO(NCCL_NET, "NET/IB : Receive wr_id:%d  from the sender, offset:%d, expected to receive:%ld", wr_id, offset, sizeof(uint64_t));
+
+    INFO(NCCL_NET, "NET/IB : Receive nreqs:%d  from the sender, events:%d", rComm->remFifo.elems[slot]->nreqs, rComm->verbs.reqs[wr_id].events);
+
+    if (rComm->remFifo.elems[slot]->nreqs == 1)
+    {
+      rComm->verbs.reqs[wr_id].recv.sizes[0] = size;
+    }
+    else if (id < rComm->remFifo.elems[slot]->nreqs -1)
+    {
+      rComm->verbs.reqs[wr_id].recv.sizes[id] = 1;
+    }
+    else
+    {
+      rComm->verbs.reqs[wr_id].recv.sizes[id] = 0;
+    }
+    rComm->verbs.reqs[wr_id].events--;
+  }
+
+  INFO(NCCL_NET, "[Proxy Service] will quit the ncclIbSocketReceiverDaemon now");
+  return NULL;
+}
+
+void* ncclIbSocketSenderDaemon(void* _args) {
+  struct ncclIbSendComm* sComm = (struct ncclIbSendComm*)_args;
+  
+  char addrline[SOCKET_NAME_MAXLEN+1];
+  INFO(NCCL_INIT|NCCL_NET, "NET/IB : Enter into ncclIbSocketSenderDaemon addr: %s dev:%d", ncclSocketToString(&sComm->sock.addr, addrline), sComm->verbs.dev);
+
+  while(!stop.load())
+  { 
+    int slot = 0;
+    int n = 0;
+    int closed;
+    int offset = 0;
+    // 1. receive the fifoslot id
+    ncclResult_t nRet = ncclSocketTryRecv(&sComm->sock, &slot, sizeof(int), &closed, false);
+    if (nRet == ncclInProgress)
+    {
+      usleep(ncclParamResilientCheckInterval());
+      continue;
+    }
+    else if (closed || nRet != ncclSuccess) break;
+    INFO(NCCL_NET, "NET/IB : Receive fifo slotid:%d from the sender, closed flag:%d nRet:%d", slot, closed, nRet);
+    // 2. receive the receive request count
+    disableIb(sComm->addr);
+
+    offset = 0;
+    while (offset < sizeof(int)) ncclSocketProgress(NCCL_SOCKET_RECV, &sComm->sock, &n, sizeof(int), &offset);
+    //INFO(NCCL_NET, "NET/IB : received request count:%d offset:%d expected to receive:%ld", n, offset, sizeof(int));
+    // 3. receive the fifo elements
+    offset = 0;
+    while (offset < n * sizeof(struct ncclIbSendFifo)) ncclSocketProgress(NCCL_SOCKET_RECV, &sComm->sock, (void *)sComm->fifo[slot], n * sizeof(struct ncclIbSendFifo), &offset);
+    INFO(NCCL_NET, "NET/IB : received fifo elements:%x offset:%d expected to receive:%ld", *(unsigned int*)sComm->fifo[slot], offset, n * sizeof(struct ncclIbSendFifo));
+  }
+
+  INFO(NCCL_NET, "[Proxy Service] will quit the ncclIbSocketSenderDaemon now");
+  return NULL;
+}
 
 ncclResult_t ncclIbInitVerbs(int dev, struct ibv_context* ctx, struct ncclIbVerbs* verbs) {
   verbs->dev = dev;
@@ -740,7 +998,17 @@ ib_send_ready:
   free(stage->buffer);
   stage->state = ncclIbCommStateStart;
 
+  char line[SOCKET_NAME_MAXLEN+1];
+  union ncclSocketAddress addr;
+  ncclSocketGetAddr(&comm->sock, &addr);
+  comm->addr=ncclSocketToString(&addr, line);
+
   *sendComm = comm;
+
+  if (ncclParamResilientEnabled()){
+    pthread_t socketSenderDaemonthread; 
+    pthread_create(&socketSenderDaemonthread, NULL, ncclIbSocketSenderDaemon, comm);
+  }
   return ncclSuccess;
 }
 
@@ -879,6 +1147,16 @@ ib_recv_ready:
   NCCLCHECK(ncclSocketProgress(NCCL_SOCKET_RECV,  &rComm->sock, &rComm->ready, sizeof(int), &stage->offset));
   if (stage->offset != sizeof(int)) return ncclSuccess;
 
+  char line[SOCKET_NAME_MAXLEN+1];
+  union ncclSocketAddress addr;
+  ncclSocketGetAddr(&rComm->sock, &addr);
+  rComm->addr=ncclSocketToString(&addr, line);
+
+  if (ncclParamResilientEnabled()){
+    pthread_t socketReceiverDaemonthread; 
+    pthread_create(&socketReceiverDaemonthread, NULL, ncclIbSocketReceiverDaemon, rComm);
+  }
+
   free(stage->buffer);
   *recvComm = rComm;
 
@@ -898,6 +1176,7 @@ ncclResult_t ncclIbGetRequest(struct ncclIbVerbs* verbs, struct ncclIbRequest** 
       r->events = 1;
       r->sock = NULL;
       r->gidInfo = NULL;
+      r->submitTime = steady_clock::now();
       *req = r;
       return ncclSuccess;
     }
@@ -1073,8 +1352,20 @@ ncclResult_t ncclIbMultiSend(struct ncclIbSendComm* comm, int slot) {
         comm->wrs[r].num_sge = 1;
       }
     }
+    
     struct ibv_send_wr* bad_wr;
-    NCCLCHECK(wrap_ibv_post_send(comm->qps[comm->qpIndex], comm->wrs, &bad_wr));
+    ncclResult_t nRet = wrap_ibv_post_send(comm->qps[comm->qpIndex], comm->wrs, &bad_wr);
+    if (nRet != ncclSuccess)
+    {
+      WARN("ncclIbMultiSend wrap_ibv_post_send failed");
+      // in resilient mode, if post send failed, just return with success, and using timeout logic to handle resend
+      if (ncclParamResilientEnabled()) {
+        disableIb(comm->addr);
+        return ncclSuccess;
+      } 
+      return nRet;
+    }
+    
     comm->qpIndex = (comm->qpIndex+1)%comm->nqps;
 
     for (int r=0; r<nreqs; r++) {
@@ -1103,6 +1394,7 @@ ncclResult_t ncclIbIsend(void* sendComm, void* data, int size, int tag, void* mh
   struct ncclIbRequest** reqs = comm->fifoReqs[slot];
   slots = comm->fifo[slot];
   uint64_t idx = comm->fifoHead+1;
+  
   if (slots[0].idx != idx) { *request = NULL; return ncclSuccess; }
   nreqs = slots[0].nreqs;
   // Wait until all data has arrived
@@ -1132,15 +1424,20 @@ ncclResult_t ncclIbIsend(void* sendComm, void* data, int size, int tag, void* mh
     NCCLCHECK(ncclIbGetRequest(&comm->verbs, &req));
     req->type = NCCL_NET_IB_REQ_SEND;
     req->sock = &comm->sock;
+    req->addr = comm->addr;
     req->verbs = &comm->verbs;
     req->nreqs = nreqs;
     req->send.size = size;
     req->send.data = data;
     req->send.lkey = mr->lkey;
     req->send.offset = 0;
+    req->send.fifoSlot = slot;
+    req->send.r = r;
+    req->send.wr_id = slots[r].wr_id;
     req->events = ncclParamIbSplitDataOnQps() ? comm->nqps : 1;
     if (comm->gidInfo.link_layer == IBV_LINK_LAYER_ETHERNET) req->gidInfo = &comm->gidInfo;
     *request = reqs[r] = req;
+    // INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d data size:%d dev:%d", req-req->verbs->reqs, req->type, size, comm->verbs.dev);
 
     // If this is a multi-recv, send only when all requests have matched.
     for (int r=0; r<nreqs; r++) {
@@ -1148,11 +1445,15 @@ ncclResult_t ncclIbIsend(void* sendComm, void* data, int size, int tag, void* mh
     }
 
     TIME_START(0);
-    NCCLCHECK(ncclIbMultiSend(comm, slot));
+    if (!getIbDisableStatus(comm->addr)) 
+    {
+      NCCLCHECK(ncclIbMultiSend(comm, slot));
+    } 
+
+    memset((void*)slots, 0, sizeof(struct ncclIbSendFifo));  
+    memset(reqs, 0, NCCL_NET_IB_MAX_RECVS*sizeof(struct ncclIbRequest*));
 
     // Clear slots[0]->nreqs, as well as other fields to help debugging and sanity checks
-    memset((void*)slots, 0, sizeof(struct ncclIbSendFifo));
-    memset(reqs, 0, NCCL_NET_IB_MAX_RECVS*sizeof(struct ncclIbRequest*));
     comm->fifoHead++;
     TIME_STOP(0);
     return ncclSuccess;
@@ -1177,7 +1478,19 @@ ncclResult_t ncclIbPostFifo(struct ncclIbRecvComm* comm, int n, void** data, int
     localElem[i].size = sizes[i]; // Sanity/Debugging
     localElem[i].tag = tags[i];
     localElem[i].idx = comm->remFifo.fifoTail+1;
+    localElem[i].wr_id = req - comm->verbs.reqs;
   }
+
+  req->recv.fifoSlot = slot;
+  req->recv.fifoPtr = localElem;
+  req->recv.fifoPosted = false;
+  
+  if (getIbDisableStatus(comm->addr)) 
+  {
+    // we need to increase the fifoTail counter because in normal case it will increase once post the flag complete. 
+    comm->remFifo.fifoTail++;
+    return ncclSuccess;
+  } 
 
   wr.wr.rdma.remote_addr = comm->remFifo.addr + slot*NCCL_NET_IB_MAX_RECVS*sizeof(struct ncclIbSendFifo);
   wr.wr.rdma.rkey = comm->remFifo.rkey;
@@ -1216,7 +1529,19 @@ ncclResult_t ncclIbPostFifo(struct ncclIbRecvComm* comm, int n, void** data, int
   }
 
   struct ibv_send_wr* bad_wr;
-  NCCLCHECK(wrap_ibv_post_send(comm->qps[0], &wr, &bad_wr));
+  ncclResult_t nRet = wrap_ibv_post_send(comm->qps[0], &wr, &bad_wr);
+  if (nRet != ncclSuccess)
+  {
+    WARN("ncclIbPostFifo wrap_ibv_post_send failed");
+    // in resilient mode, if post send failed, just return with success, and using timeout logic to handle resend
+    if (ncclParamResilientEnabled())  {
+      disableIb(comm->addr);
+      comm->remFifo.fifoTail++;
+      return ncclSuccess;
+    }
+    return nRet;
+  }
+
   comm->remFifo.fifoTail++;
 
   return ncclSuccess;
@@ -1232,27 +1557,42 @@ ncclResult_t ncclIbIrecv(void* recvComm, int n, void** data, int* sizes, int* ta
   NCCLCHECK(ncclIbGetRequest(&comm->verbs, &req));
   req->type = NCCL_NET_IB_REQ_RECV;
   req->sock = &comm->sock;
+  req->addr = comm->addr;
   req->nreqs = n;
+  // INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d nreqs:%d data size:%d dev:%d", req-req->verbs->reqs, req->type, req->nreqs, sizes[0], comm->verbs.dev);
   if (comm->gidInfo.link_layer == IBV_LINK_LAYER_ETHERNET) req->gidInfo = &comm->gidInfo;
   for (int i=0; i<n; i++) req->recv.sizes[i] = 0;
 
-  struct ibv_recv_wr wr;
-  memset(&wr, 0, sizeof(wr));
-  wr.wr_id = req - comm->verbs.reqs;
+  if (!getIbDisableStatus(comm->addr)) 
+  {
+    struct ibv_recv_wr wr;
+    memset(&wr, 0, sizeof(wr));
+    wr.wr_id = req - comm->verbs.reqs;
 
-  wr.sg_list = NULL;
-  wr.num_sge = 0;
+    wr.sg_list = NULL;
+    wr.num_sge = 0;
 
-  TIME_START(1);
-  const int nqps = ncclParamIbSplitDataOnQps() ? comm->nqps : 1;
-  for (int q=0; q<nqps; q++) {
-    struct ibv_qp* qp = comm->qps[comm->qpIndex];
-    struct ibv_recv_wr* bad_wr;
-    NCCLCHECK(wrap_ibv_post_recv(qp, &wr, &bad_wr));
-    comm->qpIndex = (comm->qpIndex+1)%comm->nqps;
+    TIME_START(1);
+    const int nqps = ncclParamIbSplitDataOnQps() ? comm->nqps : 1;
+    for (int q=0; q<nqps; q++) {
+      struct ibv_qp* qp = comm->qps[comm->qpIndex];
+      struct ibv_recv_wr* bad_wr;
+
+      ncclResult_t nRet = wrap_ibv_post_recv(qp, &wr, &bad_wr);
+      if (nRet != ncclSuccess)
+      {
+        // in resilient mode, if post receive failed, just disable the ib peer, and will contiue to post the fifo via socket using timeout logic to handle receive
+        if (!ncclParamResilientEnabled())  
+        {
+          return nRet;
+        }
+        disableIb(comm->addr);
+      }
+      comm->qpIndex = (comm->qpIndex+1)%comm->nqps;
+    }
+    TIME_STOP(1);
+    req->events = nqps;
   }
-  TIME_STOP(1);
-  req->events = nqps;
 
   *request = req;
 
@@ -1270,10 +1610,12 @@ ncclResult_t ncclIbIflush(void* recvComm, int n, void** data, int* sizes, void**
   if (comm->gpuFlush.enabled == 0 || last == -1) return ncclSuccess;
 
   // Only flush once using the last non-zero receive
+  WARN("NET/IB: ncclIbIflush Triggerred");
   struct ncclIbRequest* req;
   NCCLCHECK(ncclIbGetRequest(&comm->verbs, &req));
   req->type = NCCL_NET_IB_REQ_FLUSH;
   req->sock = &comm->sock;
+  req->addr = comm->addr;
   struct ibv_mr* mr = (struct ibv_mr*)mhandles[last];
 
   struct ibv_send_wr wr;
@@ -1299,71 +1641,102 @@ ncclResult_t ncclIbIflush(void* recvComm, int n, void** data, int* sizes, void**
 ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
   struct ncclIbRequest *r = (struct ncclIbRequest*)request;
   *done = 0;
-
+  
+  //INFO(NCCL_NET, "NET/IB : ncclIbTest Request:%ld, type:%d, events:%d, addr:%s", r-r->verbs->reqs, r->type, r->events, ncclSocketToString(&addr, line));
   while (1) {
     if (r->events == 0) {
       *done = 1;
       if (sizes && r->type == NCCL_NET_IB_REQ_RECV) {
         for (int i=0; i<r->nreqs; i++) sizes[i] = r->recv.sizes[i];
       }
+      // INFO(NCCL_NET, "NET/IB : complete Request:%ld, type:%d", r-r->verbs->reqs, r->type);
       NCCLCHECK(ncclIbFreeRequest(r));
       return ncclSuccess;
     }
-
-    int wrDone = 0;
-    struct ibv_wc wcs[4];
-    TIME_START(3);
-    NCCLCHECK(wrap_ibv_poll_cq(r->verbs->cq, 4, wcs, &wrDone));
-    if (wrDone == 0) { TIME_CANCEL(3); } else { TIME_STOP(3); }
-    if (wrDone == 0) return ncclSuccess;
-
-    for (int w=0; w<wrDone; w++) {
-      struct ibv_wc *wc = wcs+w;
-      if (wc->status != IBV_WC_SUCCESS) {
-        char line[SOCKET_NAME_MAXLEN+1];
-        union ncclSocketAddress addr;
-        ncclSocketGetAddr(r->sock, &addr);
-        char localGidString[INET6_ADDRSTRLEN] = "";
-        char remoteGidString[INET6_ADDRSTRLEN] = "";
-        const char* localGidStr = NULL, *remoteGidStr = NULL;
-        if (r->gidInfo) {
-            localGidStr = inet_ntop(AF_INET6, &r->gidInfo->localGid, localGidString, sizeof(localGidString));
-            remoteGidStr = inet_ntop(AF_INET6, &r->gidInfo->remoteGid, remoteGidString, sizeof(remoteGidString));
+    
+    if (getIbDisableStatus(r->addr)) 
+    {
+      NCCLCHECK(ncclNetSocketTest(request));
+      return ncclSuccess;
+    }
+    else
+    {
+      int wrDone = 0;
+      struct ibv_wc wcs[4];
+      TIME_START(3);
+      NCCLCHECK(wrap_ibv_poll_cq(r->verbs->cq, 4, wcs, &wrDone));
+      if (wrDone == 0) { TIME_CANCEL(3); } else { TIME_STOP(3); }
+      if (wrDone == 0){
+        if ((duration_cast<seconds>(steady_clock::now() - r->submitTime).count() >= ncclParamIbSendTimeout()) && ncclParamResilientEnabled())
+        {
+          // if receive timeout, we will receive all the data using socket.
+          WARN("NET/IB : detect timeout for request:%ld, type: %d, dev id:%d, dev name:%s, addr:%s will use socket to transmit data for this dev id", r-r->verbs->reqs, r->type, r->verbs->dev, ncclIbDevs[r->verbs->dev].devName, r->addr.c_str());
+          disableIb(r->addr);
+          NCCLCHECK(ncclNetSocketTest(request));
+          r->submitTime = steady_clock::now();
         }
-        WARN("NET/IB : Got completion from peer %s with error %d, opcode %d, len %d, vendor err %d (%s)%s%s%s%s",
-            ncclSocketToString(&addr, line), wc->status, wc->opcode, wc->byte_len, wc->vendor_err, reqTypeStr[r->type],
-            localGidStr ?  " localGid ":"", localGidString, remoteGidStr ? " remoteGid ":"", remoteGidString);
-        return ncclRemoteError;
+        return ncclSuccess;
       }
-
-      struct ncclIbRequest* req = r->verbs->reqs+(wc->wr_id & 0xff);
-      if (req->type == NCCL_NET_IB_REQ_SEND) {
-        for (int i=0; i<req->nreqs; i++) {
-          struct ncclIbRequest* sendReq = r->verbs->reqs+((wc->wr_id >> (i*8)) & 0xff);
-          if ((sendReq->events <= 0)) return ncclInternalError;
-          sendReq->events--;
-        }
-      } else {
-        if (req && wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
-          if (req->type != NCCL_NET_IB_REQ_RECV) return ncclInternalError;
-          if (req->nreqs > 1) {
-            // In the case of a multi recv, we only set sizes to 0 or 1.
-            for (int i=0; i<req->nreqs; i++) {
-              req->recv.sizes[i] = (wc->imm_data >> i) & 0x1;
-            }
-          } else {
-            req->recv.sizes[0] += wc->imm_data;
+        
+      for (int w=0; w<wrDone; w++) {
+        struct ibv_wc *wc = wcs+w;
+        if (wc->status != IBV_WC_SUCCESS) {
+          char line[SOCKET_NAME_MAXLEN+1];
+          union ncclSocketAddress addr;
+          ncclSocketGetAddr(r->sock, &addr);
+          char localGidString[INET6_ADDRSTRLEN] = "";
+          char remoteGidString[INET6_ADDRSTRLEN] = "";
+          const char* localGidStr = NULL, *remoteGidStr = NULL;
+          if (r->gidInfo) {
+              localGidStr = inet_ntop(AF_INET6, &r->gidInfo->localGid, localGidString, sizeof(localGidString));
+              remoteGidStr = inet_ntop(AF_INET6, &r->gidInfo->remoteGid, remoteGidString, sizeof(remoteGidString));
           }
+          WARN("NET/IB : Got completion from peer %s with error %d, opcode %d, len %d, vendor err %d (%s)%s%s%s%s",
+              ncclSocketToString(&addr, line), wc->status, wc->opcode, wc->byte_len, wc->vendor_err, reqTypeStr[r->type],
+              localGidStr ?  " localGid ":"", localGidString, remoteGidStr ? " remoteGid ":"", remoteGidString);
+          if (ncclParamResilientEnabled())
+          {
+            WARN("NET/IB : detect ib issue for request:%ld, type: %d, dev id:%d, dev name:%s will use socket to transmit data for this dev id", r-r->verbs->reqs, r->type, r->verbs->dev, ncclIbDevs[r->verbs->dev].devName);
+            // if resilient enabled, just quit and will using timeout logic for the message resend using socket
+            disableIb(r->addr);
+            r->submitTime = steady_clock::now();
+            NCCLCHECK(ncclNetSocketTest(request));
+            return ncclSuccess;
+          }
+          return ncclRemoteError;
         }
-        req->events--;
+
+        struct ncclIbRequest* req = r->verbs->reqs+(wc->wr_id & 0xff);
+        if (req->type == NCCL_NET_IB_REQ_SEND) {
+          for (int i=0; i<req->nreqs; i++) {
+            struct ncclIbRequest* sendReq = r->verbs->reqs+((wc->wr_id >> (i*8)) & 0xff);
+            if ((sendReq->events <= 0)) return ncclInternalError;
+            sendReq->events--;
+          }
+        } else {
+          if (req && wc->opcode == IBV_WC_RECV_RDMA_WITH_IMM) {
+            if (req->type != NCCL_NET_IB_REQ_RECV) return ncclInternalError;
+            if (req->nreqs > 1) {
+              // In the case of a multi recv, we only set sizes to 0 or 1.
+              for (int i=0; i<req->nreqs; i++) {
+                req->recv.sizes[i] = (wc->imm_data >> i) & 0x1;
+              }
+            } else {
+              req->recv.sizes[0] += wc->imm_data;
+            }
+          }
+          req->events--;
+        }
       }
     }
+    
   }
 }
 
 ncclResult_t ncclIbCloseSend(void* sendComm) {
   struct ncclIbSendComm* comm = (struct ncclIbSendComm*)sendComm;
   if (comm) {
+    stop.store(true);
     NCCLCHECK(ncclSocketClose(&comm->sock));
     for (int q=0; q<comm->nqps; q++)
       if (comm->qps[q] != NULL) NCCLCHECK(wrap_ibv_destroy_qp(comm->qps[q]));
@@ -1378,6 +1751,7 @@ ncclResult_t ncclIbCloseSend(void* sendComm) {
 ncclResult_t ncclIbCloseRecv(void* recvComm) {
   struct ncclIbRecvComm* comm = (struct ncclIbRecvComm*)recvComm;
   if (comm) {
+    stop.store(true);
     NCCLCHECK(ncclSocketClose(&comm->sock));
     for (int q=0; q<comm->nqps; q++)
       if (comm->qps[q] != NULL) NCCLCHECK(wrap_ibv_destroy_qp(comm->qps[q]));
