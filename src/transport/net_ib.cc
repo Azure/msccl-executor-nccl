@@ -769,7 +769,7 @@ void* ncclIbSocketSenderDaemon(void* _args) {
       continue;
     }
     else if (closed || nRet != ncclSuccess) break;
-    //INFO(NCCL_NET, "NET/IB : Receive fifo slotid:%d from the sender, closed flag:%d nRet:%d id:%ld", slot, closed, nRet, std::chrono::duration_cast<std::chrono::nanoseconds>(sComm->fifoReqs[slot][0]->submitTime.time_since_epoch()).count());
+    INFO(NCCL_NET, "NET/IB : Receive fifo slotid:%d from the sender, closed flag:%d nRet:%d id:%ld", slot, closed, nRet, std::chrono::duration_cast<std::chrono::nanoseconds>(sComm->fifoReqs[slot][0]->submitTime.time_since_epoch()).count());
     // 2. receive the receive request count
     disableIb(sComm->addr);
 
