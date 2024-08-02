@@ -1473,9 +1473,8 @@ ncclResult_t ncclIbIsend(void* sendComm, void* data, int size, int tag, void* mh
     req->events = ncclParamIbSplitDataOnQps() ? comm->nqps : 1;
     if (comm->gidInfo.link_layer == IBV_LINK_LAYER_ETHERNET) req->gidInfo = &comm->gidInfo;
     *request = reqs[r] = req;
-    WARN("NET/IB : generate Request:%ld type:%d addr:%s id:%ld", req-req->verbs->reqs, req->type, req->addr.c_str(), std::chrono::duration_cast<std::chrono::nanoseconds>(req->submitTime.time_since_epoch()).count());
-    //INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d data size:%d dev:%d dev name:%s", req-req->verbs->reqs, req->type, size, comm->verbs.dev, ncclIbDevs[comm->verbs.dev].devName);
-
+    INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d addr:%s id:%ld", req-req->verbs->reqs, req->type, req->addr.c_str(), std::chrono::duration_cast<std::chrono::nanoseconds>(req->submitTime.time_since_epoch()).count());
+    
     // If this is a multi-recv, send only when all requests have matched.
     for (int r=0; r<nreqs; r++) {
       if (reqs[r] == NULL) return ncclSuccess;
@@ -1597,8 +1596,8 @@ ncclResult_t ncclIbIrecv(void* recvComm, int n, void** data, int* sizes, int* ta
   req->sock = &comm->sock;
   req->addr = comm->addr;
   req->nreqs = n;
-  // INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d nreqs:%d data size:%d dev:%d", req-req->verbs->reqs, req->type, req->nreqs, sizes[0], comm->verbs.dev);
-  WARN("NET/IB : generate Request:%ld type:%d addr:%s id:%ld", req-req->verbs->reqs, req->type, req->addr.c_str(), std::chrono::duration_cast<std::chrono::nanoseconds>(req->submitTime.time_since_epoch()).count());
+  
+  INFO(NCCL_NET, "NET/IB : generate Request:%ld type:%d addr:%s id:%ld", req-req->verbs->reqs, req->type, req->addr.c_str(), std::chrono::duration_cast<std::chrono::nanoseconds>(req->submitTime.time_since_epoch()).count());
   if (comm->gidInfo.link_layer == IBV_LINK_LAYER_ETHERNET) req->gidInfo = &comm->gidInfo;
   for (int i=0; i<n; i++) req->recv.sizes[i] = 0;
 
@@ -1688,7 +1687,7 @@ ncclResult_t ncclIbTest(void* request, int* done, int* sizes) {
       if (sizes && r->type == NCCL_NET_IB_REQ_RECV) {
         for (int i=0; i<r->nreqs; i++) sizes[i] = r->recv.sizes[i];
       }
-      WARN("NET/IB : complete Request:%ld, type:%d addr:%s id:%ld", r-r->verbs->reqs, r->type, r->addr.c_str(), std::chrono::duration_cast<std::chrono::nanoseconds>(r->submitTime.time_since_epoch()).count());
+      INFO(NCCL_NET, "NET/IB : complete Request:%ld, type:%d addr:%s id:%ld", r-r->verbs->reqs, r->type, r->addr.c_str(), std::chrono::duration_cast<std::chrono::nanoseconds>(r->submitTime.time_since_epoch()).count());
       NCCLCHECK(ncclIbFreeRequest(r));
       return ncclSuccess;
     }
