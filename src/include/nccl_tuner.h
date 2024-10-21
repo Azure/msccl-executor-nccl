@@ -84,7 +84,7 @@ typedef struct {
   //
   // Outputs:
   //   - algorithm: selected algorithm to be used for the given collective
-  //   - protocol: selected protocol to be used for the give collective
+  //   - protocol: selected protocol to be used for the given collective
   //   - nChannels: number of channels (hence SMs) to be used.
   //
   // If getCollInfo() does not return ncclSuccess, NCCL will fall back to the

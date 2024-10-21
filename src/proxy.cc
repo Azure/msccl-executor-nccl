@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -540,6 +541,11 @@ static ncclResult_t SaveProxy(struct ncclComm* comm, struct ncclChannel* channel
     op->peer = peer;
     NCCLCHECK(ncclLocalOpAppend(comm, &connector->proxyConn, op));
   }
+  return ncclSuccess;
+}
+
+ncclResult_t mscclSaveProxy(struct ncclComm* comm, struct ncclChannel* channel, int type, int peer, struct ncclProxyOp* op, int connIndex) {
+  NCCLCHECK(SaveProxy(comm, channel, type, peer, op, connIndex, nullptr));
   return ncclSuccess;
 }
 

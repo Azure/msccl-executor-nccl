@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2017-2022, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -2134,6 +2135,10 @@ static ncclResult_t hostToDevRedOp(
     #if defined(__CUDA_BF16_TYPES_EXIST__)
       __nv_bfloat16 bf16;
     #endif
+    #if defined(__CUDA_FP8_TYPES_EXIST__)
+      __nv_fp8_e4m3 fp8_e4m3;
+      __nv_fp8_e5m2 fp8_e5m2;
+    #endif
     void *ptr;
   };
   u64 = 0;
@@ -2174,6 +2179,16 @@ static ncclResult_t hostToDevRedOp(
     case ncclBfloat16:
       opFull->op = ncclDevPreMulSum;
       bf16 = __float2bfloat16(float(1.0/comm->nRanks));
+      break;
+    #endif
+    #if defined(__CUDA_FP8_TYPES_EXIST__)
+    case ncclFp8E4M3:
+      opFull->op = ncclDevPreMulSum;
+      fp8_e4m3 = static_cast<__nv_fp8_e4m3>(float(1.0/comm->nRanks));
+      break;
+    case ncclFp8E5M2:
+      opFull->op = ncclDevPreMulSum;
+      fp8_e5m2 = static_cast<__nv_fp8_e5m2>(float(1.0/comm->nRanks));
       break;
     #endif
     case ncclFloat32:

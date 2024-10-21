@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2015-2017, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -91,8 +92,14 @@ static inline ncclResult_t groupJobComplete(struct ncclGroupJob* job) {
   return ret;
 }
 
+extern bool mscclAvailable();
+extern bool mscclIsCaller();
+extern ncclResult_t mscclGroupStart();
 inline ncclResult_t ncclGroupStartInternal() {
   ncclGroupDepth++;
+  if (mscclAvailable() && !mscclIsCaller()) {
+    NCCLCHECK(mscclGroupStart());
+  }
   return ncclSuccess;
 }
 

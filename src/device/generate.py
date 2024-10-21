@@ -1,11 +1,21 @@
 #!/usr/bin/env python3
+#
+# Copyright (c) 2018-2024, NVIDIA CORPORATION. All rights reserved.
+# Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
+#
+# See LICENSE.txt for license information
+#
+
 import os
 import sys
+
+CUDA_MAJOR = int(os.environ.get('CUDA_MAJOR', '0'))
+CUDA_MINOR = int(os.environ.get('CUDA_MINOR', '0'))
 
 # Order of redops, tys, protos, algos must match src/include/device.h
 all_colls =  ["Broadcast","Reduce","AllGather","ReduceScatter","AllReduce","SendRecv"]
 all_redops = ["Sum","Prod","MinMax","PreMulSum","SumPostDiv"]
-all_tys =    ["i8","u8","i32","u32","i64","u64","f16","f32","f64","bf16"]
+all_tys =    ["i8","u8","i32","u32","i64","u64","f16","f32","f64","bf16","fp8_e4m3", "fp8_e5m2"]
 all_protos = ["LL","LL128","SIMPLE"]
 all_algos =  ["TREE","RING","COLLNET_DIRECT","COLLNET_CHAIN","NVLS","NVLS_TREE","PAT"]
 
@@ -107,6 +117,7 @@ def required_cuda(coll, redop, ty, algo, proto):
   if coll in ("AllReduce","Reduce","ReduceScatter"):
     if redop=="SumPostDiv" and ty[0] not in ("i","u"): return None
     if ty=="bf16": cudart = max(cudart, 11000)
+    if ty=="fp8_e4m3" or ty=="fp8_e5m2": cudart = max(cudart, 11080)
 
   if "NVLS" in algo:
     if coll in ("AllReduce","Reduce","ReduceScatter"):
@@ -365,7 +376,9 @@ ty_to_cxx = {
   "f16": "half",
   "f32": "float",
   "f64": "double",
-  "bf16": "__nv_bfloat16"
+  "bf16": "__nv_bfloat16",
+  "fp8_e4m3": "__nv_fp8_e4m3",
+  "fp8_e5m2": "__nv_fp8_e5m2",
 }
 
 # Generate each <gensrc>/<impl>.cu:

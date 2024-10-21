@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2015-2022, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -8,24 +9,70 @@
 #include "collectives.h"
 #include "primitives.h"
 
+#if defined(ENABLE_NPKIT)
+#include "npkit/npkit.h"
+#endif
+
 template<typename T, typename RedOp>
 struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPLE> {
   static_assert(sizeof(T)==1, "SendRecv only works on single byte types T.");
 
   template<typename Proto>
   __device__ void runSend(int tid, int tn, int group, struct ncclDevWorkP2p* work) {
+#if defined(ENABLE_NPKIT)
+    bool isNpKitThread = (tid == 0);
+    int npKitCtxIdx = blockIdx.x * NCCL_MAX_WORK_ELEMENTS_P2P + group;
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
+    if (isNpKitThread) {
+      uint64_t* cpuTimestamp = ncclShmem.comm.cpuTimestamp;
+      NpKit::CollectGpuEvent(NPKIT_EVENT_TIME_SYNC_CPU, 0, 0, *cpuTimestamp,
+          ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+    }
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_GPU)
+    if (isNpKitThread) {
+      NpKit::CollectGpuEvent(NPKIT_EVENT_TIME_SYNC_GPU, 0, 0, clock64(),
+          ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+    }
+#endif
+
     size_t bytes = work->sendBytes;
     int chunkSize = work->sendIpcReg && ncclShmem.comm.isNvlink ? (1 << 30) : u32fp8Decode(work->sendChunkSize_u32fp8);
     Primitives<T, RedOp, FanAsymmetric<0, 1>, 1, Proto, 1>
       prims(tid, tn, nullptr, &work->sendRank, work->sendAddr, nullptr,
             /*redOpArg(ignored)=*/0, group, 1, 1, nullptr,
             /*ipcReg=*/work->sendIpcReg, /*netReg=*/work->sendRegistered, ncclShmem.comm.p2pChunkSize);
+
+#if defined(ENABLE_NPKIT)
+      if (isNpKitThread) {
+        prims.npKitCtxIdx = npKitCtxIdx;
+      }
+#endif
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_SEND_RECV_SEND_ENTRY)
+      if (isNpKitThread) {
+        NpKit::CollectGpuEvent(NPKIT_EVENT_SEND_RECV_SEND_ENTRY, count*sizeof(T), 0, clock64(),
+            ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+        prims.npKitDataProcessTotalTime = 0;
+      }
+#endif
     size_t cursor = 0;
     do {
       int n = min(size_t(chunkSize), bytes-cursor);
       prims.directSend(cursor, cursor, n);
       cursor += n;
     } while (cursor < bytes && work->sendRegistered == 0);
+
+#if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_SEND_RECV_SEND_EXIT)
+      if (isNpKitThread) {
+        NpKit::CollectGpuEvent(NPKIT_EVENT_SEND_RECV_SEND_EXIT, count*sizeof(T), prims.npKitDataProcessTotalTime, clock64(),
+            ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
+      }
+#endif
+
   }
 
   template<typename Proto>

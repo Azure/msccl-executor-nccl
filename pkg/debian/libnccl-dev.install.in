@@ -2,3 +2,5 @@ include/nccl.h /usr/include
 include/nccl_net.h /usr/include
 lib/libnccl.so /usr/lib/${pkg:MultiArch}
 lib/libnccl_static.a /usr/lib/${pkg:MultiArch}
+lib/pkgconfig/nccl.pc /usr/lib/${pkg:MultiArch}/pkgconfig
+lib/msccl-algorithms /usr/share/nccl

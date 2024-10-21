@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -11,6 +12,8 @@
 #include "transport.h"
 #include "xml.h"
 #include <math.h>
+
+#include "msccl/msccl_lifecycle.h"
 
 NCCL_PARAM(CrossNic, "CROSS_NIC", 2);
 

@@ -10,7 +10,6 @@
 #include "nccl.h"
 #include "nccl_common.h"
 #include <stdio.h>
-
 #include <pthread.h>
 
 // Conform to pthread and NVTX standard

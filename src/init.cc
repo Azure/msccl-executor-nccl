@@ -1,5 +1,6 @@
 /*************************************************************************
  * Copyright (c) 2015-2022, NVIDIA CORPORATION. All rights reserved.
+ * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
  *
  * See LICENSE.txt for license information
  ************************************************************************/
@@ -16,6 +17,11 @@
 #include "enqueue.h"
 #include "graph.h"
 #include "argcheck.h"
+
+#if defined(ENABLE_NPKIT)
+#include "npkit/npkit.h"
+#endif
+
 #include "tuner.h"
 #include <fcntl.h>
 #include <string.h>
@@ -26,6 +32,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include "param.h"
+#include "msccl/msccl_lifecycle.h"
+#include "msccl/msccl_status.h"
 
 #define STR2(v) #v
 #define STR(v) STR2(v)
@@ -514,6 +522,13 @@ static ncclResult_t devCommSetup(ncclComm_t comm) {
     }
   }
 
+#if defined(ENABLE_NPKIT)
+  // Init NPKit
+  NCCLCHECK(NpKit::Init(comm->rank));
+  tmpCommAndChans.comm.npKitEventCollectContexts = NpKit::GetGpuEventCollectContexts();
+  tmpCommAndChans.comm.cpuTimestamp = NpKit::GetCpuTimestamp();
+#endif
+
   NCCLCHECKGOTO(ncclCudaMemcpyAsync(devCommAndChans, &tmpCommAndChans, 1, comm->sharedRes->deviceStream.cudaStream), ret, fail);
 exit:
   NCCLCHECK(ncclStrongStreamSynchronize(&comm->sharedRes->deviceStream));
@@ -764,6 +779,12 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   int *topParentLocalRanks = NULL;
 
   timers[TIMER_INIT_ALLGATHER] = clockNano();
+
+  int highestTransportType = TRANSPORT_P2P;
+  int mscclHighestTransportType = highestTransportType;
+  bool needsProxy = false;
+  bool mscclNeedsProxy = needsProxy;
+
   // AllGather1 - begin
   NCCLCHECKGOTO(ncclCalloc(&comm->peerInfo, nranks+1), ret, fail); // Extra rank to represent CollNet root
   NCCLCHECKGOTO(fillInfo(comm, comm->peerInfo+rank, comm->commHash), ret, fail);
@@ -1201,9 +1222,13 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
       NCCLCHECKGOTO(setupChannel(comm, c, rank, nranks, rings+c*nranks), ret, fail);
     }
     NCCLCHECKGOTO(ncclTransportRingConnect(comm), ret, fail);
+    mscclHighestTransportType = std::max(mscclHighestTransportType, highestTransportType);
+    mscclNeedsProxy |= needsProxy;
 
     // Connect Trees
     NCCLCHECKGOTO(ncclTransportTreeConnect(comm), ret, fail);
+    mscclHighestTransportType = std::max(mscclHighestTransportType, highestTransportType);
+    mscclNeedsProxy |= needsProxy;
 
     // Connect PAT only for communicators with 1 GPU per node
     if (comm->maxLocalRanks == 1) NCCLCHECKGOTO(ncclTransportPatConnect(comm), ret, fail);
@@ -1293,6 +1318,13 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
   // launch NCCL kernels before all cuda mem allocation is complete. That could cause a deadlock.
   NCCLCHECKGOTO(devCommSetup(comm), ret, fail);
   timers[TIMER_INIT_CONNECT] = clockNano() -  timers[TIMER_INIT_CONNECT];
+
+  if (mscclEnabled()) {
+    NCCLCHECK(mscclInit(comm));
+    mscclStatus& status = mscclGetStatus();
+    status.needsFence |= mscclHighestTransportType > TRANSPORT_P2P;
+    status.needsProxy |= mscclNeedsProxy;
+  }
 
   /* Local intra-node barrier */
   NCCLCHECKGOTO(bootstrapIntraNodeBarrier(comm->bootstrap, comm->localRankToRank, comm->localRank, comm->localRanks, comm->localRankToRank[0]), ret, fail);
@@ -1930,10 +1962,25 @@ static ncclResult_t commDestroySync(struct ncclAsyncJob* job_) {
   int commDevice = comm->cudaDev;
   ncclResult_t ret = ncclSuccess;
 
+#if defined(ENABLE_NPKIT)
+  const char* npkitDumpDir = nullptr;
+#endif
+
   CUDACHECKGOTO(cudaGetDevice(&savedDevice), ret, fail);
   if (savedDevice != commDevice) {
     CUDACHECKGOTO(cudaSetDevice(commDevice), ret, fail);
   }
+
+#if defined(ENABLE_NPKIT)
+  // Dump NPKit events and shutdown
+  npkitDumpDir = getenv("NPKIT_DUMP_DIR");
+  if (npkitDumpDir == nullptr) {
+    WARN("NPKIT_DUMP_DIR is empty");
+  } else {
+    NCCLCHECKGOTO(NpKit::Dump(npkitDumpDir), ret, fail);
+  }
+  NCCLCHECKGOTO(NpKit::Shutdown(), ret, fail);
+#endif
 
   TRACE(NCCL_INIT, "Destroying comm %p rank %d abortFlag %d asyncResult %d", comm, comm->rank, *comm->abortFlag, comm->asyncResult);
 
@@ -1991,6 +2038,10 @@ static ncclResult_t commCleanup(ncclComm_t comm) {
 
   if (savedDevice != commDevice) {
     CUDACHECK(cudaSetDevice(savedDevice));
+  }
+
+  if (mscclEnabled()) {
+    NCCLCHECK(mscclTeardown());
   }
 
   return ncclSuccess;

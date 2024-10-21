@@ -1,5 +1,6 @@
 #
 # Copyright (c) 2015-2022, NVIDIA CORPORATION. All rights reserved.
+# Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
 #
 # See LICENSE.txt for license information
 #
@@ -13,7 +14,8 @@ LIBSRCFILES := \
 	init.cc init_nvtx.cc net.cc proxy.cc transport.cc register.cc \
 	$(wildcard graph/*.cc) \
 	$(wildcard misc/*.cc) \
-	$(wildcard transport/*.cc)
+	$(wildcard transport/*.cc) \
+	$(wildcard misc/msccl/*.cc)
 
 ##### lib files
 LIBNAME     := libnccl.so
@@ -26,6 +28,7 @@ INCDIR := $(BUILDDIR)/include
 LIBDIR := $(BUILDDIR)/lib
 OBJDIR := $(BUILDDIR)/obj
 PKGDIR := $(BUILDDIR)/lib/pkgconfig
+MSCCLALGORITHMDIR := $(LIBDIR)/msccl-algorithms
 ##### target files
 CUDARTLIB  ?= cudart_static
 
@@ -46,11 +49,13 @@ LDFLAGS    += -L${CUDA_LIB} -l$(CUDARTLIB) -lpthread -lrt -ldl
 DEVMANIFEST := $(BUILDDIR)/obj/device/manifest
 
 ##### rules
-build : lib staticlib
+build : lib staticlib msccl-algorithms
 
 lib : $(INCTARGETS) $(LIBDIR)/$(LIBTARGET) $(PKGDIR)/$(PKGTARGET)
 
 staticlib : $(LIBDIR)/$(STATICLIBTARGET)
+
+msccl-algorithms : $(MSCCLALGORITHMDIR)
 
 $(DEVMANIFEST): ALWAYS_REBUILD $(INCTARGETS)
 	$(MAKE) -C ./device
@@ -119,6 +124,9 @@ $(OBJDIR)/%.o : %.cc $(INCTARGETS)
                 sed -e 's/^ *//' -e 's/$$/:/' >> $(@:%.o=%.d)
 	@rm -f $(@:%.o=%.d.tmp)
 
+$(MSCCLALGORITHMDIR):
+	mkdir -p $(MSCCLALGORITHMDIR)
+
 clean :
 	$(MAKE) -C device clean
 	rm -rf ${INCDIR} ${LIBDIR} ${PKGDIR} ${OBJDIR}
@@ -126,6 +134,7 @@ clean :
 install : build
 	mkdir -p $(PREFIX)/lib
 	mkdir -p $(PREFIX)/lib/pkgconfig
+	mkdir -p $(PREFIX)/share/nccl/msccl-algorithms
 	mkdir -p $(PREFIX)/include
 	cp -P -v $(BUILDDIR)/lib/lib* $(PREFIX)/lib/
 	cp -P -v $(BUILDDIR)/lib/pkgconfig/* $(PREFIX)/lib/pkgconfig/
