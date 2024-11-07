@@ -947,12 +947,6 @@ private:
     }
   }
 
-  // Set MSCCL data pointers
-  __device__ __forceinline__ void setDataPtrs(void const *inputBuf, void *outputBuf) {
-    if (flags & RoleInput) userBuff = (T*)inputBuf;
-    if (flags & RoleOutput) userBuff = (T*)outputBuf;
-  }
-
   __device__ __forceinline__ void send(intptr_t inpIx, int eltN) {
     genericOp<0, 0, 0, 1, Input, -1>(inpIx, -1, eltN, false);
   }

@@ -21,7 +21,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
   __device__ void runSend(int tid, int tn, int group, struct ncclDevWorkP2p* work) {
 #if defined(ENABLE_NPKIT)
     bool isNpKitThread = (tid == 0);
-    int npKitCtxIdx = blockIdx.x * NCCL_MAX_WORK_ELEMENTS_P2P + group;
+    int npKitCtxIdx = blockIdx.x * 16 + (group - (1<<16));
 #endif
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_TIME_SYNC_CPU)
@@ -54,7 +54,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_SEND_RECV_SEND_ENTRY)
       if (isNpKitThread) {
-        NpKit::CollectGpuEvent(NPKIT_EVENT_SEND_RECV_SEND_ENTRY, count*sizeof(T), 0, clock64(),
+        NpKit::CollectGpuEvent(NPKIT_EVENT_SEND_RECV_SEND_ENTRY, bytes, 0, clock64(),
             ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
         prims.npKitDataProcessTotalTime = 0;
       }
@@ -68,7 +68,7 @@ struct RunWorkBatch<ncclFuncSendRecv, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPL
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_SEND_RECV_SEND_EXIT)
       if (isNpKitThread) {
-        NpKit::CollectGpuEvent(NPKIT_EVENT_SEND_RECV_SEND_EXIT, count*sizeof(T), prims.npKitDataProcessTotalTime, clock64(),
+        NpKit::CollectGpuEvent(NPKIT_EVENT_SEND_RECV_SEND_EXIT, bytes, prims.npKitDataProcessTotalTime, clock64(),
             ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
       }
 #endif

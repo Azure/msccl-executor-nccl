@@ -22,7 +22,6 @@
 #include <sys/time.h>
 #include <sched.h>
 
-enum { proxyRecv=0, proxySend=1 };
 void* ncclProxyServiceUDS(void* _args);
 
 static bool NeedProxy(int type, int pattern, int root, struct ncclRing* ring, int nranks) {

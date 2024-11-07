@@ -33,7 +33,6 @@ static ncclResult_t selectTransport(struct ncclComm* comm, struct ncclTopoGraph*
       connector->transportComm = transportComm;
       NCCLCHECK(transportComm->setup(comm, graph, myInfo, peerInfo, connect, connector, channelId, connIndex));
       if (transportType) *transportType = t;
-      if (needsProxy) *needsProxy = (transportComm->proxyProgress != NULL);
       return ncclSuccess;
     }
   }

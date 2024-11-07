@@ -240,7 +240,6 @@ __device__ __forceinline__ void mscclRunInterpreter(
 
       srcPointer = (t->srcBuffer == MSCCL_INPUT_BUFFER) ? thisInput : ((t->srcBuffer == MSCCL_OUTPUT_BUFFER) ? thisOutput : thisScratch);
       dstPointer = (t->dstBuffer == MSCCL_INPUT_BUFFER) ? thisInput : ((t->dstBuffer == MSCCL_OUTPUT_BUFFER) ? thisOutput : thisScratch);
-      prims.setDataPtrs(srcPointer, dstPointer);
       int count = t->count;
       for (int c = 0; c < count; c += maxAllowedCount) {
         srcOffset = gridOffset + (ssize_t) (t->srcOffset+c) * sizePerMscclChunk;

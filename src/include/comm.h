@@ -586,6 +586,8 @@ struct ncclComm {
   bool finalizeCalled;
   // shared structures for finalization
   int finalizeRankCnt;
+  // Whether this comm is compatible with MSCCL
+  bool mscclCompatible;
   // group job to support multi-thread FT
   struct ncclGroupJob *groupJob;
 

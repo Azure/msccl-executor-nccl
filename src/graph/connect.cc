@@ -12,6 +12,8 @@
 #include "rings.h"
 #include "topo.h"
 
+#include "msccl/msccl_lifecycle.h"
+
 /******************************************************************/
 /********************* Internode connection ***********************/
 /******************************************************************/
@@ -383,6 +385,7 @@ ncclResult_t ncclTopoPostset(struct ncclComm* comm, int* firstRanks, int* treePa
   int nChannels = comm->nChannels;
   int minHeadNum = INT_MAX;
   int shared = parent && parent->nvlsSupport  && parent->config.splitShare;
+  int minNchannels = 0;
   NCCLCHECK(ncclCalloc(&ringRecv, nNodes*MAXCHANNELS));
   NCCLCHECKGOTO(ncclCalloc(&ringSend, nNodes*MAXCHANNELS), ret, fail);
   NCCLCHECKGOTO(ncclCalloc(&ringPrev, nranks*MAXCHANNELS), ret, fail);
@@ -476,15 +479,23 @@ ncclResult_t ncclTopoPostset(struct ncclComm* comm, int* firstRanks, int* treePa
      nChannels = comm->nChannels = copyChannels(comm, nChannels, 2*nChannels, ringPrev, ringNext);
   }
 
+  minNchannels = ncclMinNchannels();
+
+  if (mscclEnabled()) {
+    int mscclNumChannelsRequired = 0;
+    mscclSchedulerInit(comm, &mscclNumChannelsRequired);
+    minNchannels = std::max(minNchannels, mscclNumChannelsRequired);
+  }
+
   // Honor NCCL_MIN_NRINGS/NCCL_MAX_NRINGS.
   // We permit combining max, then min, to only use the first channels, then duplicate them.
   if (comm->sharedRes->owner != comm) {
     /* child comm #channels cannot exceed top parent #channels. */
     nChannels = comm->nChannels = std::min(std::min(std::min(ncclMaxNchannels(), nChannels), comm->config.maxCTAs), comm->sharedRes->tpNChannels);
-    nChannels = comm->nChannels = copyChannels(comm, nChannels, std::min(std::max(ncclMinNchannels(), comm->config.minCTAs), comm->sharedRes->tpNChannels), ringPrev, ringNext);
+    nChannels = comm->nChannels = copyChannels(comm, nChannels, std::min(std::max(minNchannels, comm->config.minCTAs), comm->sharedRes->tpNChannels), ringPrev, ringNext);
   } else {
     nChannels = comm->nChannels = std::min(std::min(ncclMaxNchannels(), nChannels), comm->config.maxCTAs);
-    nChannels = comm->nChannels = copyChannels(comm, nChannels, std::max(ncclMinNchannels(), comm->config.minCTAs), ringPrev, ringNext);
+    nChannels = comm->nChannels = copyChannels(comm, nChannels, std::max(minNchannels, comm->config.minCTAs), ringPrev, ringNext);
   }
 
   comm->collChannels = comm->nChannels;
