@@ -1221,12 +1221,12 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
     for (int c=0; c<comm->nChannels; c++) {
       NCCLCHECKGOTO(setupChannel(comm, c, rank, nranks, rings+c*nranks), ret, fail);
     }
-    NCCLCHECKGOTO(ncclTransportRingConnect(comm), ret, fail);
+    NCCLCHECKGOTO(ncclTransportRingConnect(comm, &highestTransportType, &needsProxy), ret, fail);
     mscclHighestTransportType = std::max(mscclHighestTransportType, highestTransportType);
     mscclNeedsProxy |= needsProxy;
 
     // Connect Trees
-    NCCLCHECKGOTO(ncclTransportTreeConnect(comm), ret, fail);
+    NCCLCHECKGOTO(ncclTransportTreeConnect(comm, &highestTransportType, &needsProxy), ret, fail);
     mscclHighestTransportType = std::max(mscclHighestTransportType, highestTransportType);
     mscclNeedsProxy |= needsProxy;
 

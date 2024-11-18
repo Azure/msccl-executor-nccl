@@ -26,7 +26,7 @@ namespace {
     int rankDest;
 
 #if defined(ENABLE_NPKIT)
-    const int bid = ncclShmem.channelId - work->channelLo;
+    const int bid = blockDim.x;
     int npKitCtxIdx = bid;
 #endif
 

@@ -28,7 +28,7 @@ namespace {
     int chunk;
 
 #if defined(ENABLE_NPKIT)
-    const int bid = ncclShmem.channelId - work->channelLo;
+    const int bid = blockDim.x;
     int npKitCtxIdx = bid;
 #endif
 
@@ -217,7 +217,7 @@ namespace {
     int nelem;
 
 #if defined(ENABLE_NPKIT)
-    const int bid = ncclShmem.channelId - work->channelLo;
+    const int bid = blockDim.x;
     int npKitCtxIdx = bid;
 #endif
 
@@ -371,7 +371,7 @@ namespace {
 #if defined(ENABLE_NPKIT)
     bool isNpKitThread = false;
     int npKitCtxIdx = 0;
-    const int bid = ncclShmem.channelId - work->channelLo;
+    const int bid = blockDim.x;
     if (threadIdx.x == 0) {
       isNpKitThread = true;
       npKitCtxIdx = bid * 2;

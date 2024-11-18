@@ -1,14 +1,14 @@
 #include "comm.h"
 #include "transport.h"
 
-ncclResult_t ncclTransportRingConnect(struct ncclComm* comm) {
+ncclResult_t ncclTransportRingConnect(struct ncclComm* comm, int* highestTransportType/*=NULL*/, bool* needsProxy/*=NULL*/) {
   ncclResult_t ret = ncclSuccess;
   if (comm && comm->nRanks > 1) {
     for (int c = 0; c < comm->nChannels; c++) {
       struct ncclChannel* channel = comm->channels + c;
       NCCLCHECKGOTO(ncclTransportP2pConnect(comm, c, 1, &channel->ring.prev, 1, &channel->ring.next, 0), ret, fail);
     }
-    NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &comm->graphs[NCCL_ALGO_RING], 0), ret, fail);
+    NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &comm->graphs[NCCL_ALGO_RING], 0, highestTransportType, needsProxy), ret, fail);
     INFO(NCCL_INIT, "Connected all rings");
   }
 exit:
@@ -17,7 +17,7 @@ fail:
   goto exit;
 }
 
-ncclResult_t ncclTransportTreeConnect(struct ncclComm* comm) {
+ncclResult_t ncclTransportTreeConnect(struct ncclComm* comm, int* highestTransportType/*=NULL*/, bool* needsProxy/*=NULL*/) {
   ncclResult_t ret = ncclSuccess;
   if (comm && comm->nRanks > 1) {
     // Connect Trees
@@ -26,7 +26,7 @@ ncclResult_t ncclTransportTreeConnect(struct ncclComm* comm) {
       NCCLCHECKGOTO(ncclTransportP2pConnect(comm, c, NCCL_MAX_TREE_ARITY, channel->tree.down, 1, &channel->tree.up, 0), ret, fail);
       NCCLCHECKGOTO(ncclTransportP2pConnect(comm, c, 1, &channel->tree.up, NCCL_MAX_TREE_ARITY, channel->tree.down, 0), ret, fail);
     }
-    NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &comm->graphs[NCCL_ALGO_TREE], 0), ret, fail);
+    NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &comm->graphs[NCCL_ALGO_TREE], 0, highestTransportType, needsProxy), ret, fail);
     INFO(NCCL_INIT, "Connected all trees");
   }
 exit:

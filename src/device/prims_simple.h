@@ -946,6 +946,13 @@ private:
       ncclShmem.groups[group].userOutput = (T*)ncclShmem.groups[group].userOutput + delta;
     }
   }
+  // Set MSCCL data pointers
+  __device__ __forceinline__ void setDataPtrs(void const *inputBuf, void *outputBuf) {
+    if (tid==0) {
+      ncclShmem.groups[group].userInput = (T*)inputBuf;
+      ncclShmem.groups[group].userOutput = (T*)outputBuf;
+    }
+  }
 
   __device__ __forceinline__ void send(intptr_t inpIx, int eltN) {
     genericOp<0, 0, 0, 1, Input, -1>(inpIx, -1, eltN, false);

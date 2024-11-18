@@ -98,9 +98,6 @@ struct connectMapMem{
   ncclIpcDesc ipcDesc;
   ncclShmIpcDesc_t attachDesc;
   ncclShmIpcDesc_t createDesc;
-  char shmPath[PATH_MAX];
-  ncclShmHandle_t attachHandle;
-  ncclShmHandle_t createHandle;
 };
 
 struct connectMap {
