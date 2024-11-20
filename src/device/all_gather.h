@@ -26,7 +26,7 @@ namespace {
     int rankDest;
 
 #if defined(ENABLE_NPKIT)
-    const int bid = blockDim.x;
+    const int bid = blockIdx.x;
     int npKitCtxIdx = bid;
 #endif
 
