@@ -14,7 +14,9 @@
 #include "device.h"
 #include "msccl/msccl_scheduler.h"
 
+#ifndef MSCCL_MAX_NUM_STEPS
 #define MSCCL_MAX_NUM_STEPS 64
+#endif
 #define MSCCL_MAX_NUM_THREAD_BLOCKS_PER_CHANNEL 32
 #define MSCCL_MAX_NUM_THREAD_BLOCKS (MSCCL_MAX_NUM_THREAD_BLOCKS_PER_CHANNEL * MAXCHANNELS)
 #define MSCCL_MAX_COUNT 72 // max concurrent number of msccl chunk transmission
@@ -93,6 +95,8 @@ struct mscclAlgoMeta {
   std::string filePath;
   // number of chunks of input/output in each MSCCL algorithm loop
   int nChunksPerLoop;
+  // number of channels needed by MSCCL algorithm
+  int nChannels;
   // number of ranks required by this algorithm
   int nRanks;
   // need to times nRanks for all-gather, reduce-scatter and all-to-all

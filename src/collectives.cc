@@ -9,6 +9,70 @@
 #include "collectives.h"
 #include "enqueue.h"
 #include "nccl.h"
+
+const char* ncclFuncToString(ncclFunc_t fn) {
+  switch (fn) {
+  case ncclFuncAllGather: return "AllGather";
+  case ncclFuncAllReduce: return "AllReduce";
+  case ncclFuncBroadcast: return "Broadcast";
+  case ncclFuncRecv: return "Recv";
+  case ncclFuncReduce: return "Reduce";
+  case ncclFuncReduceScatter: return "ReduceScatter";
+  case ncclFuncSendRecv: return "SendRecv";
+  case ncclFuncSend: return "Send";
+  default: return "Invalid";
+  }
+}
+
+const char* ncclDevRedOpToString(ncclDevRedOp_t op) {
+  switch (op) {
+  case ncclDevSum: return "Sum";
+  case ncclDevProd: return "Prod";
+  case ncclDevMinMax: return "MinMax";
+  case ncclDevPreMulSum: return "PreMulSum";
+  case ncclDevSumPostDiv: return "SumPostDiv";
+  default: return "Unknown";
+  }
+}
+
+const char* ncclDatatypeToString(ncclDataType_t type) {
+  switch (type) {
+  case ncclInt8: return "ncclInt8";
+  case ncclInt32: return "ncclInt32";
+  case ncclUint32: return "ncclUint32";
+  case ncclInt64: return "ncclInt64";
+  case ncclUint64: return "ncclUint64";
+  case ncclFloat16: return "ncclFloat16";
+  case ncclFloat32: return "ncclFloat32";
+  case ncclFloat64: return "ncclFloat64";
+#if defined(__CUDA_BF16_TYPES_EXIST__)
+  case ncclBfloat16: return "ncclBfloat16";
+#endif
+  default: return "Unknown";
+  }
+}
+
+const char* ncclAlgoToString(int algo) {
+  switch (algo) {
+  case NCCL_ALGO_TREE: return "TREE";
+  case NCCL_ALGO_RING: return "RING";
+  case NCCL_ALGO_COLLNET_DIRECT: return "COLLNET_DIRECT";
+  case NCCL_ALGO_COLLNET_CHAIN: return "COLLNET_CHAIN";
+  case NCCL_ALGO_NVLS: return "NVLS";
+  case NCCL_ALGO_NVLS_TREE: return "NVLS_TREE";
+  case NCCL_ALGO_PAT: return "PAT";
+  default: return "Unknown";
+  }
+}
+
+const char* ncclProtoToString(int proto) {
+  switch (proto) {
+  case NCCL_PROTO_LL: return "LL";
+  case NCCL_PROTO_LL128: return "LL128";
+  case NCCL_PROTO_SIMPLE: return "SIMPLE";
+  default: return "Unknown";
+  }
+}
 #include "msccl/msccl_lifecycle.h"
 #include "msccl/msccl_parser.h"
 #include "msccl/msccl_setup.h"
@@ -34,7 +98,8 @@ ncclResult_t ncclAllGather(const void* sendbuff, void* recvbuff, size_t sendcoun
   struct ncclInfo info = { ncclFuncAllGather, "AllGather",
     sendbuff, recvbuff, sendcount, datatype, ncclSum, 0, comm, stream, /* Args */
     ALLGATHER_CHUNKSTEPS, ALLGATHER_SLICESTEPS };
-  return ncclEnqueueCheck(&info);
+  NCCLCHECK(ncclEnqueueCheck(&info));
+  return ncclSuccess;
 }
 
 NCCL_API(ncclResult_t, ncclAllReduce, const void* sendbuff, void* recvbuff, size_t count,
@@ -53,7 +118,7 @@ ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count,
   };
   NvtxParamsAllReduce payload{count * ncclTypeSize(datatype), op};
   NVTX3_FUNC_WITH_PARAMS(AllReduce, AllReduceSchema, payload)
-  
+
   if (mscclAvailable() && !mscclIsCaller()) {
     return mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
@@ -63,7 +128,8 @@ ncclResult_t ncclAllReduce(const void* sendbuff, void* recvbuff, size_t count,
   struct ncclInfo info = { ncclFuncAllReduce, "AllReduce",
     sendbuff, recvbuff, count, datatype, op, 0, comm, stream, /* Args */
     ALLREDUCE_CHUNKSTEPS, ALLREDUCE_SLICESTEPS };
-  return ncclEnqueueCheck(&info);
+  NCCLCHECK(ncclEnqueueCheck(&info));
+  return ncclSuccess;
 }
 
 NCCL_API(ncclResult_t, ncclBroadcast, const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype, int root,
@@ -89,14 +155,16 @@ ncclResult_t ncclBroadcast(const void* sendbuff, void* recvbuff, size_t count, n
   struct ncclInfo info = { ncclFuncBroadcast, "Broadcast",
     sendbuff, recvbuff, count, datatype, ncclSum, root, comm, stream, /* Args */
     BROADCAST_CHUNKSTEPS, BROADCAST_SLICESTEPS };
-  return ncclEnqueueCheck(&info);
+  NCCLCHECK(ncclEnqueueCheck(&info));
+  return ncclSuccess;
 }
 /* Deprecated original "in place" function, similar to MPI */
 NCCL_API(ncclResult_t, ncclBcast, void* buff, size_t count, ncclDataType_t datatype, int root,
     ncclComm_t comm, cudaStream_t stream);
 ncclResult_t ncclBcast(void* buff, size_t count, ncclDataType_t datatype, int root,
     ncclComm_t comm, cudaStream_t stream) {
-  return ncclBroadcast(buff, buff, count, datatype, root, comm, stream);
+  NCCLCHECK(ncclBroadcast(buff, buff, count, datatype, root, comm, stream));
+  return ncclSuccess;
 }
 
 NCCL_API(ncclResult_t, ncclReduce, const void* sendbuff, void* recvbuff, size_t count,
@@ -126,7 +194,8 @@ ncclResult_t ncclReduce(const void* sendbuff, void* recvbuff, size_t count,
   struct ncclInfo info = { ncclFuncReduce, "Reduce",
     sendbuff, recvbuff, count, datatype, op, root, comm, stream, /* Args */
     REDUCE_CHUNKSTEPS, REDUCE_SLICESTEPS };
-  return ncclEnqueueCheck(&info);
+  NCCLCHECK(ncclEnqueueCheck(&info));
+  return ncclSuccess;
 }
 
 NCCL_API(ncclResult_t, ncclReduceScatter, const void* sendbuff, void* recvbuff, size_t recvcount,
@@ -154,7 +223,8 @@ ncclResult_t ncclReduceScatter(const void* sendbuff, void* recvbuff, size_t recv
   struct ncclInfo info = { ncclFuncReduceScatter, "ReduceScatter",
     sendbuff, recvbuff, recvcount, datatype, op, 0, comm, stream, /* Args */
     REDUCESCATTER_CHUNKSTEPS, REDUCESCATTER_SLICESTEPS };
-  return ncclEnqueueCheck(&info);
+  NCCLCHECK(ncclEnqueueCheck(&info));
+  return ncclSuccess;
 }
 
 struct NvtxParamsSendRecv {
@@ -184,7 +254,8 @@ ncclResult_t ncclSend(const void* sendbuff, size_t count, ncclDataType_t datatyp
     1, 1 };
   ncclResult_t ret;
   NCCLCHECK(ncclGroupStart());
-  ret = ncclEnqueueCheck(&info);
+  NCCLCHECKGOTO(ncclEnqueueCheck(&info), ret, exit);
+exit:
   NCCLCHECK(ncclGroupEnd());
   return ret;
 }
@@ -207,7 +278,8 @@ ncclResult_t ncclRecv(void* recvbuff, size_t count, ncclDataType_t datatype, int
     1, 1 };
   ncclResult_t ret;
   NCCLCHECK(ncclGroupStart());
-  ret = ncclEnqueueCheck(&info);
+  NCCLCHECKGOTO(ncclEnqueueCheck(&info), ret, exit);
+exit:
   NCCLCHECK(ncclGroupEnd());
   return ret;
 }
@@ -217,7 +289,7 @@ NCCL_API(ncclResult_t, ncclAllToAll, const void* sendbuff, void* recvbuff, size_
 ncclResult_t ncclAllToAll(const void* sendbuff, void* recvbuff, size_t count, ncclDataType_t datatype,
   ncclComm_t comm, cudaStream_t stream) {
   ncclResult_t ret;
-  
+
   if (mscclAvailable() && !mscclIsCaller()) {
     ret = mscclEnqueueCheck(
       sendbuff, nullptr, nullptr, recvbuff, nullptr, nullptr,
@@ -275,7 +347,7 @@ ncclResult_t mscclRunAlgo(
   mscclStatus& status = mscclGetStatus();
   struct mscclAlgo* hostAlgo = status.hostAlgos[mscclAlgoHandle];
   struct mscclAlgo* devAlgo = status.devAlgos[mscclAlgoHandle];
-  
+
   NCCLCHECK(mscclGetCaptureStatus(stream));
 
   NCCLCHECK(mscclSetupCount(hostAlgo, comm, count, dataType));
@@ -284,18 +356,10 @@ ncclResult_t mscclRunAlgo(
 
   NCCLCHECK(mscclSetupSyncFlags(stream));
 
-  if (status.connectedAlgos[comm].find(mscclAlgoHandle) == status.connectedAlgos[comm].end()) {
-    cudaStreamCaptureMode mode = cudaStreamCaptureModeRelaxed;
-    CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
-    NCCLCHECK(mscclSetupConnections(hostAlgo, comm));
-    CUDACHECK(cudaThreadExchangeStreamCaptureMode(&mode));
-    status.connectedAlgos[comm].insert(mscclAlgoHandle);
-  }
-
   NCCLCHECK(mscclSetupProxy(hostAlgo, comm, stream));
 
   NCCLCHECK(mscclSetupKernel(sendBuff, recvBuff, count, dataType, op, hostAlgo, devAlgo, comm, stream));
- 
+
   return ncclSuccess;
 }
 
@@ -314,6 +378,6 @@ ncclResult_t mscclUnloadAlgo(mscclAlgoHandle_t mscclAlgoHandle) {
   for (auto &s : status.connectedAlgos) {
     s.second.erase(mscclAlgoHandle);
   }
-  
+
   return ncclSuccess;
 }

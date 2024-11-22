@@ -10,58 +10,43 @@
 
 namespace {
   template<typename T, typename RedOp, typename Proto>
-  __device__ __forceinline__ void runRing(ncclWorkElem *args) {
-    const int tid = threadIdx.x;
-    const int nthreads = args->nWarps*WARP_SIZE;
-    const int bid = args->bid;
-    const int nChannels = args->nChannels;
+  __device__ __forceinline__ void runRing(int tid, int nthreads, struct ncclDevWorkColl* work) {
     ncclRing *ring = &ncclShmem.channel.ring;
-    const ssize_t chunkSize = int(Proto::calcBytePerStep()/sizeof(T) * (Proto::Id == NCCL_PROTO_SIMPLE ? REDUCE_CHUNKSTEPS : 1));
-    const ssize_t minChunkSizeLL128 = int(nthreads*(Proto::calcBytePerGrain()/sizeof(T)));
     const int nranks = ncclShmem.comm.nRanks;
-    const ssize_t loopSize = nChannels*chunkSize;
-    const ssize_t size = args->count;
     const int rank = ncclShmem.comm.rank;
     const int prevRank = ring->userRanks[nranks-1];
-    const int root = args->root;
+    const int root = work->root;
+    size_t chunkCount;
+    size_t channelCount;
+    size_t gridOffset;
+    ncclCollCbdPart(work, ncclShmem.channelId, Proto::Id, sizeof(T), (size_t*)nullptr, &gridOffset, &channelCount, &chunkCount);
+    size_t offset;
+    int nelem;
 
+    // Coverity reports that the callee treats &ring->next as an array.  However, due to the use of
+    // FanSymmetric<1>, only the first element is ever accessed, so it's fine.
+    // coverity[callee_ptr_arith:FALSE]
     Primitives<T, RedOp, FanSymmetric<1>, 0, Proto, 0>
-      prims(tid, nthreads, &ring->prev, &ring->next, args->sendbuff, args->recvbuff, args->redOpArg);
-
-    auto calcChunkSize = [&]__device__(ssize_t gridOffset)->int {
-      int realChunkSize;
-      if (Proto::Id == NCCL_PROTO_SIMPLE) {
-        realChunkSize = min(chunkSize, divUp(size-gridOffset, nChannels));
-        realChunkSize = roundUp(realChunkSize, (nthreads-WARP_SIZE)*sizeof(uint64_t)/sizeof(T));
-      }
-      else if (Proto::Id == NCCL_PROTO_LL)
-        realChunkSize = size-gridOffset < loopSize ? args->lastChunkSize : chunkSize;
-      else if (Proto::Id == NCCL_PROTO_LL128)
-        realChunkSize = min(divUp(size-gridOffset, nChannels*minChunkSizeLL128)*minChunkSizeLL128, chunkSize);
-      return realChunkSize;
-    };
+      prims(tid, nthreads, &ring->prev, &ring->next, work->sendbuff, work->recvbuff, work->redOpArg);
 
     if (prevRank == root) {
-      for (ssize_t gridOffset = 0; gridOffset < size; gridOffset += loopSize) {
-        int realChunkSize = calcChunkSize(gridOffset);
-        ssize_t offset = gridOffset + bid*realChunkSize;
-        int nelem = min(realChunkSize, size-offset);
+      for (size_t elemOffset = 0; elemOffset < channelCount; elemOffset += chunkCount) {
+        offset = gridOffset + elemOffset;
+        nelem = min(chunkCount, channelCount - elemOffset);
         prims.send(offset, nelem);
       }
     }
     else if (rank == root) {
-      for (ssize_t gridOffset = 0; gridOffset < size; gridOffset += loopSize) {
-        int realChunkSize = calcChunkSize(gridOffset);
-        ssize_t offset = gridOffset + bid*realChunkSize;
-        int nelem = min(realChunkSize, size-offset);
+      for (size_t elemOffset = 0; elemOffset < channelCount; elemOffset += chunkCount) {
+        offset = gridOffset + elemOffset;
+        nelem = min(chunkCount, channelCount - elemOffset);
         prims.recvReduceCopy(offset, offset, nelem, /*postOp=*/true);
       }
     }
     else {
-      for (ssize_t gridOffset = 0; gridOffset < size; gridOffset += loopSize) {
-        int realChunkSize = calcChunkSize(gridOffset);
-        ssize_t offset = gridOffset + bid*realChunkSize;
-        int nelem = min(realChunkSize, size-offset);
+      for (size_t elemOffset = 0; elemOffset < channelCount; elemOffset += chunkCount) {
+        offset = gridOffset + elemOffset;
+        nelem = min(chunkCount, channelCount - elemOffset);
         prims.recvReduceSend(offset, nelem);
       }
     }
@@ -69,23 +54,23 @@ namespace {
 }
 
 template<typename T, typename RedOp>
-struct RunWorkElement<ncclFuncReduce, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPLE> {
-  __device__ __forceinline__ void run(ncclWorkElem *args) {
+struct RunWorkColl<ncclFuncReduce, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_SIMPLE> {
+  __device__ __forceinline__ void run(int tid, int nthreads, struct ncclDevWorkColl* work) {
     using Proto = ProtoSimple<REDUCE_CHUNKSTEPS/REDUCE_SLICESTEPS, REDUCE_SLICESTEPS>;
-    runRing<T, RedOp, Proto>(args);
+    runRing<T, RedOp, Proto>(tid, nthreads, work);
   }
 };
 
 template<typename T, typename RedOp>
-struct RunWorkElement<ncclFuncReduce, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_LL> {
-  __device__ __forceinline__ void run(ncclWorkElem *args) {
-    runRing<T, RedOp, ProtoLL>(args);
+struct RunWorkColl<ncclFuncReduce, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_LL> {
+  __device__ __forceinline__ void run(int tid, int nthreads, struct ncclDevWorkColl* work) {
+    runRing<T, RedOp, ProtoLL>(tid, nthreads, work);
   }
 };
 
 template<typename T, typename RedOp>
-struct RunWorkElement<ncclFuncReduce, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_LL128> {
-  __device__ __forceinline__ void run(ncclWorkElem *args) {
-    runRing<T, RedOp, ProtoLL128>(args);
+struct RunWorkColl<ncclFuncReduce, T, RedOp, NCCL_ALGO_RING, NCCL_PROTO_LL128> {
+  __device__ __forceinline__ void run(int tid, int nthreads, struct ncclDevWorkColl* work) {
+    runRing<T, RedOp, ProtoLL128>(tid, nthreads, work);
   }
 };

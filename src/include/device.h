@@ -9,13 +9,13 @@
 
 #include "nccl.h"
 #include "nccl_common.h"
-#include "align.h"
-
+#include "bitops.h"
+#include <algorithm>
+#include <stdint.h>
+#include <sys/types.h>
 #if defined(ENABLE_NPKIT)
 #include "npkit/npkit_struct.h"
 #endif
-
-#include <stdint.h>
 
 extern const char* ncclFuncStr[NCCL_NUM_FUNCTIONS];
 
@@ -25,6 +25,12 @@ extern const char* ncclProtoStr[NCCL_NUM_PROTOCOLS];
 
 #define NCCL_MAX_OPS 2048
 #define NCCL_STEPS 8
+
+#ifdef __CUDA_ARCH__
+  #define NCCL_CUDA_ARCH __CUDA_ARCH__
+#else
+  #define NCCL_CUDA_ARCH 0
+#endif
 
 #include "net_device.h"
 
@@ -57,8 +63,11 @@ union ncclLLFifoLine {
 
 #define WARP_SIZE 32
 #define MAXCHANNELS 32
+#define NCCL_MAX_LOCAL_RANKS 64
 #define NCCL_MAX_NTHREADS 640
+#define NCCL_MIN_NTHREADS (4*WARP_SIZE)
 #define NCCL_SIMPLE_MAX_NTHREADS 512
+#define NCCL_SIMPLE_EXTRA_GROUP_IF_NTHREADS_GE (3*WARP_SIZE)
 #define NCCL_LL_MAX_NTHREADS 512
 #define NCCL_LL_LINES_PER_THREAD 8
 #ifdef TEST_LL_CLEANUP
@@ -89,6 +98,18 @@ static_assert(NCCL_LL_CLEAN_MASK % NCCL_STEPS == 0, "Invalid NCCL_LL_CLEAN_MASK 
 #define NCCL_IPC_READ     0x10
 #define NCCL_NVLS_MIN_POLL 0x20
 
+// Number of named barriers supported by CUDA
+#define NCCL_MAX_GROUPS 16
+
+#define NCCL_MAX_COLLNET_SIZE (1L << 29)
+
+enum ncclRegBufferType {
+  NCCL_REGULAR_BUFFER = 0,
+  NCCL_IPC_REG_BUFFER = 1,
+  NCCL_NVLS_REG_BUFFER = 2,
+  NCCL_COLLNET_REG_BUFFER = 3
+};
+
 struct ncclConnInfo {
   // Regular comm mechanism
   char *buffs[NCCL_NUM_PROTOCOLS]; // Local for recv, remote for send
@@ -98,11 +119,11 @@ struct ncclConnInfo {
 
   int flags;          // Direct communication / other flags
   int shared;         // Buffers are shared
+  int stepSize;       // Step size for the SIMPLE buffer
   void **ptrExchange; // Pointer exchange for direct communication
   uint64_t* redOpArgExchange; // PreOp scaler exchange for direct pull case
 
-  int *sizesFifo;     // Sizes fifo from GPU to proxy
-  int *offsFifo;      // Buffer fifo from proxy to GPU
+  struct ncclConnFifo* connFifo; // Used for GPU - Proxy communication
 
   uint64_t step;      // Keep where we are
   uint64_t llLastCleaning;
@@ -110,6 +131,8 @@ struct ncclConnInfo {
 };
 
 struct ncclProxyConnector {
+  bool initialized;
+  int rank;
   int tpRank;
   int tpLocalRank;
   int sameProcess;
@@ -123,6 +146,8 @@ struct ncclConnector {
   struct ncclTransportComm* transportComm;
   void* transportResources;
   struct ncclConnInfo conn;
+  int sendMemSameProcess;
+  int recvMemSameProcess;
 };
 
 struct ncclRing {
@@ -156,11 +181,14 @@ struct ncclDirect {
   int nHeads;   // Number of parallel N<->1<->net operations we'll do in parallel; size of up/down
   int headRank; // Index in 0..nHeads-1 I am the head rank of. -1 if I'm not a head rank (no local NIC)
   int shift;    // Shuffling of send/recv for scatter/gather operations, basically localRank%nHeads
+  // The heads[...] are guaranteed to be in rotated order start with self:
+  //   headRank, (headRank+1)%nHeads, (headRank+2)%nHeads, ...
+  int heads[NCCL_MAX_DIRECT_ARITY+1];
   int up[NCCL_MAX_DIRECT_ARITY];
   int down[NCCL_MAX_DIRECT_ARITY];
 };
 
-#define NCCL_MAX_NVLS_ARITY 8
+#define NCCL_MAX_NVLS_ARITY 32
 #define NCCL_MAX_NVLS_TREE_ARITY 3
 struct ncclNvls {
   int out;
@@ -174,6 +202,12 @@ struct ncclNvls {
   int nNodes;
 };
 
+#if __CUDA_ARCH__ >= 900
+#define NCCL_MAX_ARITY NCCL_MAX_NVLS_ARITY
+#else
+#define NCCL_MAX_ARITY NCCL_MAX_DIRECT_ARITY
+#endif
+
 #define NCCL_MAX_CONNS 2
 struct ncclChannelPeer {
   struct ncclConnector send[NCCL_MAX_CONNS];
@@ -183,103 +217,160 @@ struct ncclChannelPeer {
 
 struct ncclDevComm;
 
-/* ncclWork is to be a power of two, currently 8x64 bytes, */
-/* to make sure reads to host from the CUDA kernel are aligned. */
-/* Make sure to adjust padding at the end of ncclWorkElem. */
-#define NCCL_WORK_SIZE 512
+struct alignas(16) ncclDevWorkP2p {
+  void *sendAddr, *recvAddr;
+  size_t sendBytes, recvBytes;
+  int sendRank, recvRank;
+  // From the part index, nP2pChannels, and channelBase the device code can
+  // calculate which part of the transfer a channel is responsible for.
+  uint8_t nP2pChannels; // Always equal to comm->p2pnChannels
+  uint8_t channelBase; // Channel owning first part.
+  // Zero channels indicates no work in that direction.
+  uint8_t nSendChannels, nRecvChannels;
+  // Chunk size stored in 8 bits via u32fp8Encode/Decode.
+  uint8_t sendChunkSize_u32fp8, recvChunkSize_u32fp8;
 
-enum ncclWorkType : uint8_t {
-   ncclWorkTypeUnused=0,
-   ncclWorkTypeColl=1,
-   ncclWorkTypeP2p=2,
-   ncclWorkTypeRegColl=3
-};
-enum ncclWorkP2PType : uint8_t {
-  ncclWorkP2pTypeUnused=0,
-  ncclWorkP2pTypeSend,
-  ncclWorkP2pTypeRecv
-};
-
-struct ncclWorkHeader {
-  union {
-    int32_t workNext;  // when isLast=0: Offset from kernel argument workHead
-    uint32_t doneAcks; // when isLast=1: Monotonic (mod 1<<32) ack value to send back.
-  };
-  uint16_t funcIndex;
-  uint8_t isLast:1; // last work for this kernel
-  uint8_t inFifo:1; // is this work in the fifo
-  enum ncclWorkType type;
+  uint8_t sendProtoLL:1, recvProtoLL:1;
+  uint8_t sendRegistered:1, recvRegistered:1;
+  uint8_t sendIpcReg:1, recvIpcReg:1;
 };
 
-struct ncclWorkElem {
-  union {
-    uint8_t flagBits;
-    struct {
-      uint8_t isUsed:1, redOpArgIsPtr:1, regUsed:1;
-    };
-  };
-  uint8_t nWarps;
-  uint8_t direct;
+// Compute the subset of the data transfer corresponding to the given part index.
+inline __host__ __device__ void ncclP2pPartBounds(int nParts, int part, size_t bytes, size_t* partBeg, size_t* partEnd) {
+  size_t partBytes = alignUp(divUp(bytes, nParts), 4<<10);
+  #if __CUDA_ARCH__
+    *partBeg = min((part+0)*partBytes, bytes);
+    *partEnd = min((part+1)*partBytes, bytes);
+  #else
+    *partBeg = std::min<size_t>((part+0)*partBytes, bytes);
+    *partEnd = std::min<size_t>((part+1)*partBytes, bytes);
+  #endif
+}
 
-  const void * sendbuff;
-  void * recvbuff;
+// implemented in channel.h
+inline __host__ uint8_t ncclP2pChannelBaseForRound(struct ncclComm* comm, int p2pRound);
 
-  size_t count;
-  size_t lastChunkSize;
+// ncclP2pChannelToPart and ncclP2pChannelForPart are inverses. The device code
+// uses ncclP2pChannelToPart to determine which part "this" channel is responsible for.
+inline __host__ int ncclP2pChannelForPart(int nP2pChannels, int base, int part) {
+  // Only works because nP2pChannels is pow2
+  int nChannelsLog2 = countOneBits(nP2pChannels-1);
+  int delta = reverseBits(part, nChannelsLog2);
+  return (base + delta) & (nP2pChannels-1);
+}
+inline __device__ int ncclP2pChannelToPart(int nP2pChannels, int base, int channel) {
+  // Only works because nP2pChannels is pow2
+  int nChannelsLog2 = countOneBits(nP2pChannels-1);
+  int delta = (channel-base) & (nP2pChannels-1);
+  return reverseBits(delta, nChannelsLog2);
+}
+
+struct alignas(16) ncclDevWorkColl {
+  // Running on channels [channelLo..channelHi], hi is inclusive.
+  //   nChannels == (channelHi - channelLo) + 1
+  uint32_t channelLo:8, channelHi:8;
+  uint32_t nWarps:8;
+  uint32_t redOpArgIsPtr:1, regUsed:2, oneNode:1, direct:4;
   uint32_t root;
-  uint8_t bid;
-  uint8_t nChannels;
+  void* recvbuff;
+  void* sendbuff;
+  uintptr_t sendbuffOffset;
+  uintptr_t recvbuffOffset;
+  uintptr_t* sendbuffRmtAddrs;
+  uintptr_t* recvbuffRmtAddrs;
+  union {
+    // Continuous-byte-distribution scheduling. The lo and hi channels are of
+    // different size than the channels in the middle.
+    struct {
+      size_t countLo, countMid, countHi;
+      // Chunk counts where units are ncclProtoGrainSize(protocol) bytes
+      uint64_t chunkGrainsLo:21, chunkGrainsMid:21, chunkGrainsHi:21;
+    } cbd;
+    // Collnet scheduling. All channels divide work evenly.
+    struct {
+      size_t count; // Total size, not divided per channel.
+      uint32_t chunkCount;
+    } collnet;
+  };
   uint64_t redOpArg;
 };
 
-#define NCCL_MAX_WORK_ELEMENTS ((NCCL_WORK_SIZE - alignUp(sizeof(ncclWorkHeader), alignof(ncclWorkElem)))/sizeof(ncclWorkElem))
-static_assert(NCCL_MAX_WORK_ELEMENTS == 9, "Sanity check: NCCL_MAX_WORK_ELEMENTS == 9");
 
-struct ncclWorkElemP2p {
-  int peer : 30;
-  int proto : 2;
+__host__ __device__ constexpr int ncclProtoGrainSize(int proto) {
+  return proto == NCCL_PROTO_LL ? 16 :
+         proto == NCCL_PROTO_LL128 ? WARP_SIZE*NCCL_LL128_SHMEM_ELEMS_PER_THREAD/NCCL_LL128_LINEELEMS*NCCL_LL128_DATAELEMS*sizeof(uint64_t) :
+         proto == NCCL_PROTO_SIMPLE ? 512 :
+         -1;
+}
 
-  enum ncclWorkP2PType p2pType;
-  uint8_t nWarps;
-  uint8_t warpStart;
-  uint8_t ngroups;
-  // Important not to use any fields with greater than 4-byte alignment since
-  // we need sizeof(ncclWorkElemP2p)==28, but that would be padded up to 32 if
-  // there were 8-byte fields.
-  //void* buff;
-  uint32_t buffHi32, buffLo32; // buff = buffHi32<<32 | buffLo32;
-  //size_t count;
-  uint32_t countHi32, countLo32; // count = countHi32<<32 | countLo32;
-  int chunkSize;
-};
+template<typename Int>
+__host__ __device__ inline void ncclCollCbdPart(
+    struct ncclDevWorkColl* work, uint32_t channelId, int proto, int eltSize,
+    Int* count, Int* partOffset, Int* partCount, Int* chunkCount
+  ) {
+  int eltPerGrain = ncclProtoGrainSize(proto)/eltSize;
+  int nMidChannels = work->channelHi - work->channelLo - 1;
+  // We can assum that nMidChannels<0 implies countMid==0, which let's us assume
+  // that countMid*nMidChannels == 0.
+  if (count != nullptr) {
+    *count = work->cbd.countLo + work->cbd.countMid*nMidChannels + work->cbd.countHi;
+  }
+  if (channelId == work->channelLo) {
+    *partOffset = 0;
+    *partCount = work->cbd.countLo;
+    *chunkCount = work->cbd.chunkGrainsLo*eltPerGrain;
+  } else if (channelId == work->channelHi) {
+    *partOffset = work->cbd.countLo + nMidChannels*work->cbd.countMid;
+    *partCount = work->cbd.countHi;
+    *chunkCount = work->cbd.chunkGrainsHi*eltPerGrain;
+  } else {
+    int mid = channelId - work->channelLo - 1;
+    *partOffset = work->cbd.countLo + mid*work->cbd.countMid;
+    *partCount = work->cbd.countMid;
+    *chunkCount = work->cbd.chunkGrainsMid*eltPerGrain;
+  }
+}
 
-static_assert(((NCCL_WORK_SIZE - alignUp(sizeof(ncclWorkHeader), alignof(ncclWorkElemP2p)))/sizeof(ncclWorkElemP2p)) >= 16, "Sanity check: NCCL_MAX_WORK_ELEMENTS_P2P == 16");
-#define NCCL_MAX_WORK_ELEMENTS_P2P 16
-
-struct ncclWorkElemReg {
-  struct ncclWorkElem elem;
+struct alignas(16) ncclDevWorkCollReg {
+  struct ncclDevWorkColl coll;
   void* dnInputs[NCCL_MAX_DIRECT_ARITY+1];
   void* dnOutputs[NCCL_MAX_DIRECT_ARITY+1];
   void* upOutputs[NCCL_MAX_DIRECT_ARITY+1];
 };
 
-#define NCCL_MAX_WORK_ELEMENTS_REG ((NCCL_WORK_SIZE - alignUp(sizeof(ncclWorkHeader), alignof(ncclWorkElemReg)))/sizeof(ncclWorkElemReg))
-static_assert(NCCL_MAX_WORK_ELEMENTS_REG == 2, "Sanity check: NCCL_MAX_WORK_ELEMENTS_REG == 2");
-
-// Number of named barriers supported by CUDA
-#define NCCL_MAX_GROUPS 16
-
-struct ncclWork {
-  struct ncclWorkHeader header;
-  union {
-    char pad[NCCL_WORK_SIZE - sizeof(struct ncclWorkHeader)];
-    struct ncclWorkElem elems[NCCL_MAX_WORK_ELEMENTS];
-    struct ncclWorkElemP2p p2pElems[NCCL_MAX_WORK_ELEMENTS_P2P];
-    struct ncclWorkElemReg regElems[NCCL_MAX_WORK_ELEMENTS_REG];
-  };
+enum ncclDevWorkType: uint8_t {
+  ncclDevWorkTypeP2p,
+  ncclDevWorkTypeColl,
+  ncclDevWorkTypeCollReg
 };
-static_assert(sizeof(struct ncclWork) == NCCL_WORK_SIZE, "Sanity check: sizeof(struct ncclWork) == NCCL_WORK_SIZE");
-static_assert(sizeof(struct ncclWork)%16 == 0, "Sanity check: sizeof(struct ncclWork)%16 == 0");
+
+constexpr size_t ncclDevWorkSize(enum ncclDevWorkType type) {
+  return type == ncclDevWorkTypeP2p ? sizeof(ncclDevWorkP2p) :
+         type == ncclDevWorkTypeColl ? sizeof(ncclDevWorkColl) : sizeof(ncclDevWorkCollReg);
+}
+
+#define NCCL_MAX_DEV_WORK_BATCH_BYTES 1024
+#define NCCL_MAX_DEV_WORK_BATCH_COLLS (NCCL_MAX_DEV_WORK_BATCH_BYTES/sizeof(ncclDevWorkColl))
+#define NCCL_MAX_DEV_WORK_P2P_PER_BATCH 8
+struct alignas(16) ncclDevWorkBatch {
+  union {
+    struct {
+      // nextExtends: should next one be merged into this one.
+      // nextJump=0: end of this channel's batch list
+      // nextJump>0: batches[thisIndex+nextJump] is next batch in this list
+      uint32_t nextJump:14, nextExtends:1;
+      uint32_t workType:2, funcId:15;
+    };
+    // Unioning bitfields with underlying type hints compiler to emit the best
+    // SASS LD/ST accesses.
+    uint32_t flags;
+  };
+  // Rolling offset in fifo where this batch's work structs begin
+  uint32_t offsetBase;
+  // Set of relative offsets from offsetBase for this channel's subset of the batch:
+  // For each bit index i in offsetMask, find work at fifo offset: offsetBase + i*sizeof(WorkStructType)
+  uint64_t offsetBitset;
+};
 
 struct ncclDevChannelPeer {
   // Stripped version of ncclChannelPeer where we only keep the ncclConnInfo
@@ -301,24 +392,28 @@ struct alignas(16) ncclDevChannel {
 struct ncclDevComm {
   int rank;
   int nRanks;
+  int node;
+  int nNodes;
   int buffSizes[NCCL_NUM_PROTOCOLS];
   int p2pChunkSize;
+  int isNvlink;
 
-  // Operation list for aggregation
-  int workFifoDepth;
-  struct ncclWork* workFifoHeap; // may be cudaHost or GDR memory
+  // Work fifo return credits
+  uint32_t* workConsumed/*[MAXCHANNELS]*/;
+
+  int* collNetDenseToUserRank;
 
   // Flag to ask NCCL kernels to abort
   volatile uint32_t* abortFlag;
 
   // Channels, device side
   struct ncclDevChannel* channels/*[MAXCHANNELS]*/;
+  int* rankToLocalRank;
 
 #if defined(ENABLE_NPKIT)
   NpKitEventCollectContext* npKitEventCollectContexts;
   uint64_t* cpuTimestamp;
 #endif
-
 };
 
 struct alignas(16) ncclDevCommAndChannels {
@@ -326,11 +421,37 @@ struct alignas(16) ncclDevCommAndChannels {
   struct ncclDevChannel channels[MAXCHANNELS];
 };
 
-#ifdef __CUDA_ARCH__
-  #define NCCL_CUDA_ARCH __CUDA_ARCH__
-#else
-  #define NCCL_CUDA_ARCH 0
-#endif
+enum ncclDevWorkStorageType: uint8_t {
+  ncclDevWorkStorageTypeArgs=0,
+  ncclDevWorkStorageTypeFifo=1,
+  ncclDevWorkStorageTypePersistent=2
+};
+
+struct alignas(16) ncclDevKernelArgs {
+  struct ncclDevComm* comm;
+  uint64_t channelMask;
+  enum ncclDevWorkStorageType workStorageType;
+  uint32_t workMask;
+  void* workBuf;
+  // A channel's first batch is at `blockIdx.x`. Use `nextJump` to follow rest of list.
+  // struct ncclDevWorkBatch batches[];
+};
+
+__host__ __device__ constexpr int ncclMaxKernelArgsSize(/*int cudaDriver, */int cudaArch=NCCL_CUDA_ARCH) {
+  //return (cudaArch < 700 || cudaDriver < 12010) ? 4<<10 : (32<<10)-4;
+  return 4<<10;
+}
+
+template<size_t capacity>
+struct alignas(16) ncclDevKernelArgsStorage {
+  union {
+    struct ncclDevKernelArgs args;
+    ulong2 storage[capacity/sizeof(ulong2)];
+  };
+};
+
+typedef ncclDevKernelArgsStorage<(4<<10)> ncclDevKernelArgs4K;
+//typedef ncclDevKernelArgsStorage<(32<<10)-4> ncclDevKernelArgs31K;
 
 template<typename T>
 __host__ __device__ constexpr T min_constexpr(T a) { return a; }
@@ -344,6 +465,10 @@ __host__ __device__ constexpr T max_constexpr(T a) { return a; }
 template<typename T, typename ...Ts>
 __host__ __device__ constexpr T max_constexpr(T a, T b, Ts ...c) {
   return max_constexpr<T>((a > b ? a : b), c...);
+}
+
+constexpr int ncclDevMaxChannelsForArgsBytes(size_t argsBytes) {
+  return min_constexpr<size_t>(MAXCHANNELS, (argsBytes - sizeof(struct ncclDevKernelArgs))/sizeof(struct ncclDevWorkBatch));
 }
 
 // Calculate the unroll factor given:
@@ -392,6 +517,7 @@ extern int const ncclDevKernelCount;
 extern void* const ncclDevKernelList[/*ncclDevKernelCount*/];
 
 // Table of most specialized kernel function to run given func index.
+extern int const ncclDevFuncIdCount;
 extern int const ncclDevFuncRowToId[];
 extern void* const ncclDevKernelForFunc[/*funcIndex*/];
 extern bool const ncclDevKernelForFuncIsSpecialized[/*funcIndex*/];
@@ -430,46 +556,56 @@ inline int ncclDevFuncId(int coll, int devRedOp, int type, int algo, int proto) 
   #else
   constexpr int NumTypes = ncclNumTypes + 1;
   #endif
+  int row;
+  do {
+    row = 0; // ncclDevFuncIndex_P2p
+    if (coll == ncclFuncSendRecv) break;
+    row += 1;
 
-  int row = 0; // ncclDevFuncIndex_P2p
-  if (coll == ncclFuncSendRecv) goto have_row;
-  row += 1;
+    int nAlgos = 4;
+    if (coll == ncclFuncAllGather) {
+      int algo1 = algo == NCCL_ALGO_RING ? 0 :
+                  algo == NCCL_ALGO_COLLNET_DIRECT ? 1 :
+                  algo == NCCL_ALGO_NVLS ? 2 :
+                /*algo == NCCL_ALGO_PAT*/ 3;
+      row += algo1*NCCL_NUM_PROTOCOLS + proto;
+      break;
+    }
+    row += nAlgos*NCCL_NUM_PROTOCOLS;
 
-  if (coll == ncclFuncAllGather) {
-    int algo1 = algo == NCCL_ALGO_RING ? 0 :
-              /*algo == NCCL_ALGO_NVLS*/ 1;
-    row += algo1*NCCL_NUM_PROTOCOLS + proto;
-    goto have_row;
-  }
-  row += (/*NumAlgos=*/2)*NCCL_NUM_PROTOCOLS;
+    nAlgos = 1;
+    if (coll == ncclFuncBroadcast) {
+      row += proto;
+      break;
+    }
+    row += nAlgos*NCCL_NUM_PROTOCOLS;
 
-  if (coll == ncclFuncBroadcast) {
-    row += proto;
-    goto have_row;
-  }
-  row += (/*NumAlgos=*/1)*NCCL_NUM_PROTOCOLS;
+    nAlgos = 6;
+    if (coll == ncclFuncAllReduce) {
+      row += ((devRedOp*NumTypes + type)*nAlgos + algo)*NCCL_NUM_PROTOCOLS + proto;
+      break;
+    }
+    row += ncclNumDevRedOps*NumTypes*nAlgos*NCCL_NUM_PROTOCOLS;
 
-  if (coll == ncclFuncAllReduce) {
-    row += ((devRedOp*NumTypes + type)*NCCL_NUM_ALGORITHMS + algo)*NCCL_NUM_PROTOCOLS + proto;
-    goto have_row;
-  }
-  row += ncclNumDevRedOps*NumTypes*NCCL_NUM_ALGORITHMS*NCCL_NUM_PROTOCOLS;
+    nAlgos = 1;
+    if (coll == ncclFuncReduce) {
+      row += (devRedOp*NumTypes + type)*NCCL_NUM_PROTOCOLS + proto;
+      break;
+    }
+    row += ncclNumDevRedOps*NumTypes*nAlgos*NCCL_NUM_PROTOCOLS;
 
-  if (coll == ncclFuncReduce) {
-    row += (devRedOp*NumTypes + type)*NCCL_NUM_PROTOCOLS + proto;
-    goto have_row;
-  }
-  row += ncclNumDevRedOps*NumTypes*(/*NumAlgos=*/1)*NCCL_NUM_PROTOCOLS;
+    nAlgos = 4;
+    if (coll == ncclFuncReduceScatter) {
+      int algo1 = algo == NCCL_ALGO_RING ? 0 :
+                  algo == NCCL_ALGO_COLLNET_DIRECT ? 1 :
+                  algo == NCCL_ALGO_NVLS ? 2 :
+                /*algo == NCCL_ALGO_PAT*/ 3;
+      row += ((devRedOp*NumTypes + type)*nAlgos + algo1)*NCCL_NUM_PROTOCOLS + proto;
+      break;
+    }
+    row += ncclNumDevRedOps*NumTypes*nAlgos*NCCL_NUM_PROTOCOLS;
+  } while (false);
 
-  if (coll == ncclFuncReduceScatter) {
-    int algo1 = algo == NCCL_ALGO_RING ? 0 :
-              /*algo == NCCL_ALGO_NVLS*/ 1;
-    row += ((devRedOp*NumTypes + type)*2 + algo1)*NCCL_NUM_PROTOCOLS + proto;
-    goto have_row;
-  }
-  row += ncclNumDevRedOps*NumTypes*(/*NumAlgos=*/2)*NCCL_NUM_PROTOCOLS;
-
-have_row:
   return ncclDevFuncRowToId[row];
 }
 
