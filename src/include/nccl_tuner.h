@@ -73,7 +73,7 @@ typedef struct {
   //   - context: tuner context object
   ncclResult_t (*init)(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context);
 
-  // Gets info (algo, protocol, number of ctas and threads) for a given collective.
+  // Gets info (algo, protocol, number of ctas and threads) for a give collective.
   // Inputs:
   //   - context: tuner context object
   //   - collType: collective type , e.g., allreduce, allgather…
