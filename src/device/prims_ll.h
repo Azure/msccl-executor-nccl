@@ -1,6 +1,7 @@
 /*************************************************************************
  * Copyright (c) 2016-2022, NVIDIA CORPORATION. All rights reserved.
  * Modifications Copyright (c) Microsoft Corporation. Licensed under the MIT License.
+ *
  * See LICENSE.txt for license information
  ************************************************************************/
 
@@ -30,7 +31,7 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL, P2p>:
   uint64_t recvConnHead;
 
   struct ncclConnInfo* sendConn = NULL;
-  volatile int* sendConnFifoPtr = NULL;
+  volatile struct ncclConnFifo* sendConnFifo = NULL;
   volatile uint64_t* sendConnHeadPtr = NULL;
   uint64_t sendConnHead;
   uint64_t sendConnHeadCache; // Cache last seen value
@@ -64,10 +65,11 @@ private:
   inline __device__ uint32_t sendFlag(int i) { return NCCL_LL_FLAG(sendStep[i]+1); }
 
   inline __device__ void barrier() {
-    if (nthreads == WARP_SIZE)
+    if (nthreads == WARP_SIZE) {
       __syncwarp();
-    else
-      asm volatile ("bar.sync %1, %0;" :: "r"(nthreads), "r"(15-group));
+    } else {
+      barrier_sync(15-group, nthreads);
+    }
   }
 
   uint32_t abort = 0;
@@ -95,9 +97,9 @@ private:
         sendConnHeadCache = *sendConnHeadPtr;
         if (checkAbort(spins, 1)) break;
       }
-      if (sendConnFifoPtr) {
+      if (sendConnFifo) {
         int size = ((sendConnHead & NCCL_LL_CLEAN_MASK) == NCCL_LL_CLEAN_MASK) ? stepLines*sizeof(union ncclLLFifoLine) : nbytes;
-        sendConnFifoPtr[sendConnHead%NCCL_STEPS] = size;
+        sendConnFifo[sendConnHead%NCCL_STEPS].size = size;
       }
       sendConnHead += 1;
     }
@@ -134,7 +136,7 @@ private:
     uint32_t flag = recvFlag(i);
     uint32_t data1, flag1, data2, flag2;
     int spins = 0;
-  
+
   #if defined(ENABLE_NPKIT) && (defined(ENABLE_NPKIT_EVENT_PRIM_LL_DATA_PROCESS_ENTRY) && defined(ENABLE_NPKIT_EVENT_PRIM_LL_DATA_PROCESS_EXIT) || defined(ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME))
     int npkitWaitRecvSpins = 0;
     if (tid == 0) {
@@ -143,7 +145,7 @@ private:
 #endif
 
     do {
-      asm("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(data1), "=r"(flag1), "=r"(data2), "=r"(flag2) : "l"(&src->i4));
+      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(data1), "=r"(flag1), "=r"(data2), "=r"(flag2) : "l"(&src->i4) : "memory");
 
 #if defined(ENABLE_NPKIT) && (defined(ENABLE_NPKIT_EVENT_PRIM_LL_DATA_PROCESS_ENTRY) && defined(ENABLE_NPKIT_EVENT_PRIM_LL_DATA_PROCESS_EXIT) || defined(ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME))
       npkitWaitRecvSpins++;
@@ -167,9 +169,11 @@ private:
   __device__ void readLLBeginAll(int offset, ncclLLFifoLine(&line)[MaxRecv]) {
     #pragma unroll
     for (int i=BeginIx; i < MaxRecv; i++) {
+      // Yes, for some template arguments this code will be unreachable.  That's fine.
+      // coverity[dead_error_line]
       if (i < fan.nrecv()) {
         union ncclLLFifoLine* src = recvPtr(i) + offset;
-        asm("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(line[i].data1), "=r"(line[i].flag1), "=r"(line[i].data2), "=r"(line[i].flag2) : "l"(&src->i4));
+        asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(line[i].data1), "=r"(line[i].flag1), "=r"(line[i].data2), "=r"(line[i].flag2) : "l"(&src->i4) : "memory");
       }
     }
   }
@@ -186,7 +190,7 @@ private:
 #endif
 
     while (line[i].flag1 != flag || line[i].flag2 != flag) {
-      asm("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(line[i].data1), "=r"(line[i].flag1), "=r"(line[i].data2), "=r"(line[i].flag2) : "l"(&src->i4));
+      asm volatile("ld.volatile.global.v4.u32 {%0,%1,%2,%3}, [%4];" : "=r"(line[i].data1), "=r"(line[i].flag1), "=r"(line[i].data2), "=r"(line[i].flag2) : "l"(&src->i4) : "memory");
 
 #if defined(ENABLE_NPKIT) && (defined(ENABLE_NPKIT_EVENT_PRIM_LL_DATA_PROCESS_ENTRY) && defined(ENABLE_NPKIT_EVENT_PRIM_LL_DATA_PROCESS_EXIT) || defined(ENABLE_NPKIT_PRIM_COLLECT_DATA_PROCESS_TIME))
       npkitWaitRecvSpins++;
@@ -207,7 +211,7 @@ private:
   }
 
   __device__ void storeLL(union ncclLLFifoLine* dst, uint64_t val, uint32_t flag) {
-    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" :: "l"(&dst->i4), "r"((uint32_t)val), "r"(flag), "r"((uint32_t)(val >> 32)), "r"(flag));
+    asm volatile("st.volatile.global.v4.u32 [%0], {%1,%2,%3,%4};" :: "l"(&dst->i4), "r"((uint32_t)val), "r"(flag), "r"((uint32_t)(val >> 32)), "r"(flag) : "memory");
   }
 
   static constexpr int EltPerLine = sizeof(uint64_t)/sizeof(T);
@@ -221,13 +225,13 @@ private:
       uint64_t u8;
     };
     if(sizeof(U) == 1)
-      asm("ld.volatile.global.b8 %0,[%1];" : "=r"(u4) : "l"(src));
+      asm volatile("ld.volatile.global.b8 %0,[%1];" : "=r"(u4) : "l"(src) : "memory");
     else if(sizeof(U) == 2)
-      asm("ld.volatile.global.b16 %0,[%1];" : "=h"(u2) : "l"(src));
+      asm volatile("ld.volatile.global.b16 %0,[%1];" : "=h"(u2) : "l"(src) : "memory");
     else if(sizeof(U) == 4)
-      asm("ld.volatile.global.b32 %0,[%1];" : "=r"(u4) : "l"(src));
+      asm volatile("ld.volatile.global.b32 %0,[%1];" : "=r"(u4) : "l"(src) : "memory");
     else
-      asm("ld.volatile.global.b64 %0,[%1];" : "=l"(u8) : "l"(src));
+      asm volatile("ld.volatile.global.b64 %0,[%1];" : "=l"(u8) : "l"(src) : "memory");
     return elt;
   }
 
@@ -241,13 +245,13 @@ private:
     };
     elt = val;
     if(sizeof(U) == 1)
-      asm("st.volatile.global.b8 [%0],%1;" :: "l"(dst), "r"(u4));
+      asm volatile("st.volatile.global.b8 [%0],%1;" :: "l"(dst), "r"(u4) : "memory");
     else if(sizeof(U) == 2)
-      asm("st.volatile.global.b16 [%0],%1;" :: "l"(dst), "h"(u2));
+      asm volatile("st.volatile.global.b16 [%0],%1;" :: "l"(dst), "h"(u2) : "memory");
     else if(sizeof(U) == 4)
-      asm("st.volatile.global.b32 [%0],%1;" :: "l"(dst), "r"(u4));
+      asm volatile("st.volatile.global.b32 [%0],%1;" :: "l"(dst), "r"(u4) : "memory");
     else
-      asm("st.volatile.global.b64 [%0],%1;" :: "l"(dst), "l"(u8));
+      asm volatile("st.volatile.global.b64 [%0],%1;" :: "l"(dst), "l"(u8) : "memory");
   }
 
   struct DataLoader {
@@ -270,6 +274,8 @@ private:
       else {
         #pragma unroll
         for(int i=0; i < EltPerLine; i++) {
+          // Yes, for some template arguments this code will be unreachable.  That's fine.
+          // coverity[dead_error_line]
           if(i==0 || i < eltN)
             elt[i] = load(src + i);
         }
@@ -294,6 +300,8 @@ private:
     u8 = val;
     #pragma unroll
     for(int i=0; i < EltPerLine; i++) {
+      // Yes, for some template arguments this code will be unreachable.  That's fine.
+      // coverity[dead_error_line]
       if (i==0 || i < eltN)
         //store(dst+i, elt[i]);
         dst[i] = elt[i];
@@ -367,6 +375,8 @@ private:
       if (RECV) {
         data = !SRC ? peerData : applyReduce(redOp, peerData, data);
         #pragma unroll MaxRecv
+        // Yes, for some template arguments this code will be unreachable.  That's fine.
+        // coverity[dead_error_line]
         for (int i=1; i < MaxRecv && i < fan.nrecv(); i++) {
           peerData = readLLFinish(offset, line, i);
           data = applyReduce(redOp, peerData, data);
@@ -377,6 +387,8 @@ private:
 
       // Send : inter-node, then intra-node, then local
       if (SEND) {
+        // Yes, for some template arguments this code will be unreachable.  That's fine.
+        // coverity[dead_error_line]
         for (int i=1; i < MaxSend && i < fan.nsend(); i++)
           storeLL(sendPtr(i)+offset, data, sendFlag(i));
         storeLL(sendPtr(0)+offset, data, sendFlag(0));
@@ -409,6 +421,8 @@ private:
       postRecv();
     }
     if (SEND) {
+      // Yes, for some template arguments this code will be unreachable.  That's fine.
+      // coverity[dead_error_line]
       for (int i=1; i < MaxSend && i < fan.nsend(); i++)
         incSend(i, offset);
       incSend(0, offset);
@@ -492,7 +506,7 @@ template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
 
     barrier();
   }
-  
+
   __device__ __forceinline__ void loadRecvConn(struct ncclConnInfo* conn, int i) {
     recvBuff[i] = (union ncclLLFifoLine*)conn->buffs[NCCL_PROTO_LL];
     recvStep[i] = conn->step;
@@ -515,7 +529,7 @@ template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
       sendConnHeadPtr = sendConn->head;
       sendConnHeadCache = *sendConnHeadPtr;
       sendConnHead = sendConn->step;
-      sendConnFifoPtr = sendConn->sizesFifo;
+      sendConnFifo = sendConn->connFifo;
     }
   }
 
@@ -523,7 +537,8 @@ template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
   __device__  Primitives(
       const int tid, const int nthreads, int const *recvPeers, int const *sendPeers,
       void const *inputBuf, void *outputBuf, uint64_t redOpArg, uint8_t group=0,
-      uint8_t connIndexRecv=0, uint8_t connIndexSend=0, struct ncclWorkElem* e = nullptr, int stepSize_=0
+      uint8_t connIndexRecv=0, uint8_t connIndexSend=0, struct ncclDevWorkColl* e = nullptr,
+      bool ipcReg = false, bool netReg = false, int stepSize_ = 0
     ):
     redOp(redOpArg),
     tid(tid), nthreads(nthreads), wid(tid%WARP_SIZE), group(group),
@@ -532,16 +547,23 @@ template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
     // If we are going to support oneshot collNet + LL, then we would need to add connector index here
     int nrecv=0, nsend=0;
     // We compare with Fan::MaxRecv here because this->MaxRecv is always at least 1
+    // Yes, for some template arguments this code will be unreachable.  That's fine.
+    // coverity[dead_error_line]
     while (nrecv < Fan::MaxRecv && recvPeers[nrecv] >= 0) {
       loadRecvConn(&channel->peers[recvPeers[nrecv]]->recv[connIndexRecv], nrecv);
       nrecv++;
     }
+    // coverity[dead_error_line]
     while (nsend < MaxSend && sendPeers[nsend] >= 0) {
       loadSendConn(&channel->peers[sendPeers[nsend]]->send[connIndexSend], nsend);
       nsend++;
     }
     this->fan = Fan(nrecv, nsend);
+    // Coverity reports recvConn and sendConn being possibly NULL at this point but that won't actually
+    // happen given the two "while" loops just above.
+    // coverity[var_deref_model:FALSE]
     loadRecvSync();
+    // coverity[var_deref_model:FALSE]
     loadSendSync();
     setDataPtrs(inputBuf, outputBuf);
   }
@@ -642,6 +664,7 @@ template <int REDUCE, int COPY, int MULTISRCS, int MULTIDSTS>
           ncclShmem.comm.npKitEventCollectContexts + npKitCtxIdx);
     }
 #endif
+
     LLGenericOp<1, 0, Input, Output>(inpIx, outIx, eltN, postOp);
 
 #if defined(ENABLE_NPKIT) && defined(ENABLE_NPKIT_EVENT_RECV_REDUCE_COPY_EXIT)

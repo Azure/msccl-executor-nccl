@@ -20,6 +20,8 @@ bool mscclAvailable();
 
 int getEnvInt(const char* env, int64_t deftVal);
 
+ncclResult_t mscclSchedulerInit(ncclComm_t comm, int* numChannelsRequired);
+
 ncclResult_t mscclInit(ncclComm_t comm);
 
 ncclResult_t mscclInitKernelsForDevice(int cudaArch, size_t* maxStackSize);

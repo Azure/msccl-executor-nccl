@@ -172,8 +172,8 @@ struct xmlHandler {
 ncclResult_t xmlLoadSub(FILE* file, struct ncclXml* xml, struct ncclXmlNode* head, struct xmlHandler handlers[], int nHandlers) {
   if (head && head->type == NODE_TYPE_SINGLE) return ncclSuccess;
   while (1) {
-    if (xml->maxIndex == MAX_NODES) {
-      WARN("Error : XML parser is limited to 1024 nodes");
+    if (xml->maxIndex == xml->maxNodes) {
+      WARN("Error : XML parser is limited to %d nodes", xml->maxNodes);
       return ncclInternalError;
     }
     struct ncclXmlNode* node = xml->nodes+xml->maxIndex;
@@ -198,7 +198,13 @@ ncclResult_t xmlLoadSub(FILE* file, struct ncclXml* xml, struct ncclXmlNode* hea
     int found = 0;
     for (int h=0; h<nHandlers; h++) {
       if (strcmp(node->name, handlers[h].name) == 0) {
-        if (head) head->subs[head->nSubs++] = node;
+        if (head) {
+          if (head->nSubs == MAX_SUBS) {
+            WARN("Error : XML parser is limited to %d subnodes", MAX_SUBS);
+            return ncclInternalError;
+          }
+          head->subs[head->nSubs++] = node;
+        }
         node->parent = head;
         node->nSubs = 0;
         xml->maxIndex++;
@@ -217,6 +223,23 @@ ncclResult_t xmlLoadSub(FILE* file, struct ncclXml* xml, struct ncclXmlNode* hea
 /**************/
 /* XML Writer */
 /**************/
+
+// exp == 1 -- serialize; exp == 0 -- deserialize
+ncclResult_t ncclTopoConvertXml(struct ncclXml* xml, uintptr_t base, int exp) {
+  for (int n = 0; n < xml->maxIndex; n++) {
+    struct ncclXmlNode *node = &xml->nodes[n];
+
+    // For "parent", we shift the base by 1 so that we can distinguish actual
+    // NULL pointers from pointers pointing to the first node.
+    if (node->parent)
+      node->parent = (struct ncclXmlNode *) (exp ? ((uintptr_t)node->parent - base + 1) : (base - 1 + (uintptr_t)node->parent));
+
+    for (int s = 0; s < node->nSubs; s++) {
+      node->subs[s] = (struct ncclXmlNode *) (exp ? ((uintptr_t)node->subs[s] - base) : (base + (uintptr_t)node->subs[s]));
+    }
+  }
+  return ncclSuccess;
+}
 
 ncclResult_t ncclTopoDumpXmlRec(int indent, FILE* file, struct ncclXmlNode* node) {
   for (int i=0; i<indent; i++) fprintf(file, " ");
@@ -249,11 +272,48 @@ ncclResult_t ncclTopoDumpXmlToFile(const char* xmlTopoFile, struct ncclXml* xml)
   return ncclSuccess;
 }
 
+static ncclResult_t xmlTopoFuseXmlRecursive(struct ncclXml* dst, struct ncclXmlNode* dstParent, struct ncclXmlNode* srcParent) {
+  for (int i = 0; i < srcParent->nSubs; i++) {
+    struct ncclXmlNode* srcNode = srcParent->subs[i];
+    struct ncclXmlNode* dstNode;
+    NCCLCHECK(xmlFindNode(dstParent, srcNode, &dstNode));
+    if (dstNode == NULL) {
+      NCCLCHECK(xmlAddTree(dst, dstParent, srcNode));
+    } else {
+      NCCLCHECK(xmlTopoFuseXmlRecursive(dst, dstNode, srcNode));
+    }
+  }
+  return ncclSuccess;
+}
+
+ncclResult_t ncclTopoFuseXml(struct ncclXml* dst, struct ncclXml* src) {
+  struct ncclXmlNode* topNodeDst;
+  NCCLCHECK(xmlFindTag(dst, "system", &topNodeDst));
+
+  if (topNodeDst == NULL) {
+    xmlAddTree(dst, NULL, src->nodes);
+    return ncclSuccess;
+  }
+
+  struct ncclXmlNode* topNodeSrc;
+  NCCLCHECK(xmlFindTag(src, "system", &topNodeSrc));
+
+  NCCLCHECK(xmlTopoFuseXmlRecursive(dst, topNodeDst, topNodeSrc));
+
+  return ncclSuccess;
+}
+
+
 /****************************************/
 /* Parser rules for our specific format */
 /****************************************/
 
 ncclResult_t ncclTopoXmlLoadNvlink(FILE* file, struct ncclXml* xml, struct ncclXmlNode* head) {
+  NCCLCHECK(xmlLoadSub(file, xml, head, NULL, 0));
+  return ncclSuccess;
+}
+
+ncclResult_t ncclTopoXmlLoadPciLink(FILE* file, struct ncclXml* xml, struct ncclXmlNode* head) {
   NCCLCHECK(xmlLoadSub(file, xml, head, NULL, 0));
   return ncclSuccess;
 }
@@ -280,8 +340,8 @@ ncclResult_t ncclTopoXmlLoadNic(FILE* file, struct ncclXml* xml, struct ncclXmlN
 }
 
 ncclResult_t ncclTopoXmlLoadPci(FILE* file, struct ncclXml* xml, struct ncclXmlNode* head) {
-  struct xmlHandler handlers[] = { { "pci", ncclTopoXmlLoadPci }, { "gpu", ncclTopoXmlLoadGpu }, { "nic", ncclTopoXmlLoadNic} };
-  NCCLCHECK(xmlLoadSub(file, xml, head, handlers, 3));
+  struct xmlHandler handlers[] = { { "pci", ncclTopoXmlLoadPci }, { "gpu", ncclTopoXmlLoadGpu }, { "nic", ncclTopoXmlLoadNic}, { "pcilink", ncclTopoXmlLoadPciLink} };
+  NCCLCHECK(xmlLoadSub(file, xml, head, handlers, 4));
   return ncclSuccess;
 }
 
@@ -346,6 +406,28 @@ static ncclResult_t getPciPath(const char* busId, char** path) {
   return ncclSuccess;
 }
 
+#include <dirent.h>
+static ncclResult_t getBcmLinks(const char* busId, int* nlinks, char** peers) {
+  *nlinks = 0;
+  *peers = NULL;
+  char dirPath[] = "/sys/kernel/pci_switch_link/virtual_switch_links/0000:00:00.0";
+  memcpylower(dirPath+sizeof("/sys/kernel/pci_switch_link/virtual_switch_links/")-1, busId, BUSID_SIZE-1);
+  DIR *dir = opendir(dirPath);
+  if (dir) {
+    struct dirent* file;
+    while ((file = readdir(dir)) != NULL) {
+      if (strlen(file->d_name) != BUSID_SIZE-1) continue;
+      char* path;
+      if (getPciPath(file->d_name, &path) == ncclSystemError) continue;
+      free(path);
+      NCCLCHECK(ncclRealloc(peers, (*nlinks)*BUSID_SIZE, ((*nlinks)+1)*BUSID_SIZE));
+      memcpy((*peers)+BUSID_SIZE*(*nlinks)++, file->d_name, BUSID_SIZE);
+    }
+    closedir(dir);
+  }
+  return ncclSuccess;
+}
+
 ncclResult_t ncclTopoGetStrFromSys(const char* path, const char* fileName, char* strValue) {
   char filePath[PATH_MAX];
   sprintf(filePath, "%s/%s", path, fileName);
@@ -386,8 +468,8 @@ ncclResult_t ncclTopoGetXmlFromCpu(struct ncclXmlNode* cpuNode, struct ncclXml* 
       return ncclInternalError;
     }
     // Set affinity
-    char cpumaskPath[] = "/sys/devices/system/node/node0000";
-    sprintf(cpumaskPath, "/sys/devices/system/node/node%s", numaId);
+    char cpumaskPath[] = "/sys/devices/system/node/node000000";
+    snprintf(cpumaskPath, sizeof(cpumaskPath), "/sys/devices/system/node/node%s", numaId);
     NCCLCHECK(ncclTopoSetAttrFromSys(cpuNode, cpumaskPath, "cpumap", "affinity"));
   }
 
@@ -464,10 +546,11 @@ ncclResult_t ncclTopoGetPciNode(struct ncclXml* xml, const char* busId, struct n
 // There can be trailing chars.
 int isHex(char c) { return ((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')); }
 int checkBDFFormat(char* bdf) {
-  if (bdf[4] != ':' || bdf[7] != ':' || bdf[10] != '.') return 0;
-  if (isHex(bdf[0]) == 0 || isHex(bdf[1] == 0) || isHex(bdf[2] == 0) || isHex(bdf[3] == 0) ||
-      isHex(bdf[5] == 0) || isHex(bdf[6] == 0) || isHex(bdf[8] == 0) || isHex(bdf[9] == 0) ||
-      isHex(bdf[11] == 0)) return 0;
+  if (strlen(bdf) != 12) return 0;
+  if ((bdf[4] != ':') || (bdf[7] != ':') || (bdf[10] != '.')) return 0;
+  if ((isHex(bdf[0]) == 0) || (isHex(bdf[1]) == 0) || (isHex(bdf[2]) == 0) || (isHex(bdf[3]) == 0) ||
+      (isHex(bdf[5]) == 0) || (isHex(bdf[6]) == 0) || (isHex(bdf[8]) == 0) || (isHex(bdf[9]) == 0) ||
+      (isHex(bdf[11]) == 0)) return 0;
   return 1;
 }
 
@@ -531,6 +614,24 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
       NCCLCHECK(xmlSetAttr(pciNode, "link_width", ""));
     }
   }
+
+  const char* vendor;
+  NCCLCHECK(xmlGetAttr(pciNode, "vendor", &vendor));
+  if (vendor != NULL && strcmp(vendor, "0x1000") == 0) { // BCM switch, look for P2P connections
+    int nlinks;
+    char* peers;
+    NCCLCHECK(getBcmLinks(busId, &nlinks, &peers));
+    for (int l=0; l<nlinks; l++) {
+      char* target = peers+l*BUSID_SIZE;
+      struct ncclXmlNode* linkNode;
+      NCCLCHECK(xmlGetSubKv(pciNode, "pcilink", &linkNode, "target", target));
+      if (linkNode == NULL) {
+        NCCLCHECK(xmlAddNode(xml, pciNode, "pcilink", &linkNode));
+        NCCLCHECK(xmlSetAttr(linkNode, "target", target));
+      }
+    }
+  }
+
   struct ncclXmlNode* parent = pciNode->parent;
   if (parent == NULL) {
     if (path) {
@@ -556,6 +657,7 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
             NCCLCHECK(xmlGetSubKv(topNode, "cpu", &parent, "numaid", numaIdStr));
             if (parent == NULL) {
               NCCLCHECK(xmlAddNode(xml, topNode, "cpu", &parent));
+              NCCLCHECK(xmlSetAttrLong(parent, "host_hash", getHostHash()));
               NCCLCHECK(xmlSetAttr(parent, "numaid", numaIdStr));
             }
           } else if (slashCount == 2) {
@@ -581,19 +683,27 @@ ncclResult_t ncclTopoGetXmlFromSys(struct ncclXmlNode* pciNode, struct ncclXml* 
         struct ncclXmlNode* topNode;
         NCCLCHECK(xmlFindTag(xml, "system", &topNode));
         NCCLCHECK(xmlAddNode(xml, topNode, "cpu", &parent));
+        NCCLCHECK(xmlSetAttrLong(parent, "host_hash", getHostHash()));
         NCCLCHECK(xmlSetAttr(parent, "numaid", "-1"));
         NCCLCHECK(ncclTopoGetXmlFromCpu(parent, xml));
       }
     }
     pciNode->parent = parent;
     // Keep PCI sub devices ordered by PCI Bus ID (Issue #820)
+    // Coverity complains about dereferenced parent being NULL
+    // but this can never happen.
+    // coverity[var_deref_op]
     int subIndex = parent->nSubs;
     const char* newBusId;
     NCCLCHECK(xmlGetAttrStr(pciNode, "busid", &newBusId));
     for (int s=0; s<parent->nSubs; s++) {
       const char* busId;
-      NCCLCHECK(xmlGetAttrStr(parent->subs[s], "busid", &busId));
-      if (strcmp(newBusId, busId) < 0) { subIndex = s; break; }
+      NCCLCHECK(xmlGetAttr(parent->subs[s], "busid", &busId));
+      if (busId != NULL && strcmp(newBusId, busId) < 0) { subIndex = s; break; }
+    }
+    if (parent->nSubs == MAX_SUBS) {
+      WARN("Error : XML parser is limited to %d subnodes", MAX_SUBS);
+      return ncclInternalError;
     }
     for (int s = parent->nSubs; s > subIndex; s--) parent->subs[s] = parent->subs[s-1];
     parent->subs[subIndex] = pciNode;
@@ -828,25 +938,33 @@ ncclResult_t ncclTopoFillNet(struct ncclXml* xml, const char* pciPath, const cha
   return ncclSuccess;
 }
 
-ncclResult_t ncclTopoTrimXmlRec(struct ncclXmlNode* node) {
+ncclResult_t ncclTopoTrimXmlRec(struct ncclXmlNode* node, int* keep) {
   const char* str;
   NCCLCHECK(xmlGetAttr(node, "keep", &str));
   if (str && strcmp(str, "1") == 0) {
     NCCLCHECK(xmlUnsetAttr(node, "keep"));
+    *keep = 1;
   } else {
     // Copy nSubs and subs as they could change as we trim recursively.
     struct ncclXmlNode* subs[MAX_SUBS];
     int nSubs = node->nSubs;
     memcpy(subs, node->subs, node->nSubs*sizeof(struct ncclXmlNode*));
+    *keep = 0;
     for (int s=0; s<nSubs; s++) {
-      NCCLCHECK(ncclTopoTrimXmlRec(subs[s]));
+      int k = 0;
+      NCCLCHECK(ncclTopoTrimXmlRec(subs[s], &k));
+      *keep += k;
     }
-    if (node->nSubs == 0) NCCLCHECK(xmlRemoveNode(node));
+    if (*keep == 0 && // Trim PCI switches or CPU with no used GPU/NIC under them.
+        (strcmp(node->name, "pci") == 0 || strcmp(node->name, "cpu") == 0)) {
+      NCCLCHECK(xmlRemoveNode(node));
+    }
   }
   return ncclSuccess;
 }
 ncclResult_t ncclTopoTrimXml(struct ncclXml* xml) {
-  NCCLCHECK(ncclTopoTrimXmlRec(xml->nodes));
+  int keep = 0;
+  NCCLCHECK(ncclTopoTrimXmlRec(xml->nodes, &keep));
   return ncclSuccess;
 }
 
