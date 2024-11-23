@@ -9,12 +9,14 @@
 
 #include "nccl.h"
 #include "alloc.h"
+#include "bitops.h"
 #include "checks.h"
 #include <stdint.h>
 #include <time.h>
 #include <sched.h>
 #include <algorithm>
 #include <new>
+#include <type_traits>
 
 int ncclCudaCompCap();
 
@@ -25,7 +27,6 @@ ncclResult_t busIdToInt64(const char* busId, int64_t* id);
 ncclResult_t getBusId(int cudaDev, int64_t *busId);
 
 ncclResult_t getHostName(char* hostname, int maxlen, const char delim);
-uint64_t getHash(const char* string, int n);
 uint64_t getHostHash();
 uint64_t getPidHash();
 ncclResult_t getRandomData(void* buffer, size_t bytes);
@@ -39,9 +40,7 @@ int parseStringList(const char* string, struct netIf* ifList, int maxList);
 bool matchIfList(const char* string, int port, struct netIf* ifList, int listSize, bool matchExact);
 
 static long log2i(long n) {
- long l = 0;
- while (n>>=1) l++;
- return l;
+  return log2Down(n);
 }
 
 inline uint64_t clockNano() {
@@ -91,8 +90,11 @@ void ncclMemoryStackConstruct(struct ncclMemoryStack* me);
 void ncclMemoryStackDestruct(struct ncclMemoryStack* me);
 void ncclMemoryStackPush(struct ncclMemoryStack* me);
 void ncclMemoryStackPop(struct ncclMemoryStack* me);
+void* ncclMemoryStackAlloc(struct ncclMemoryStack* me, size_t size, size_t align);
 template<typename T>
 T* ncclMemoryStackAlloc(struct ncclMemoryStack* me, size_t n=1);
+template<typename Header, typename Element>
+inline Header* ncclMemoryStackAllocInlineArray(struct ncclMemoryStack* me, size_t nElt);
 
 ////////////////////////////////////////////////////////////////////////////////
 /* ncclMemoryPool: A free-list of same-sized allocations. It is an invalid for
@@ -135,11 +137,14 @@ T* ncclIntruQueueHead(ncclIntruQueue<T,next> *me);
 template<typename T, T *T::*next>
 void ncclIntruQueueEnqueue(ncclIntruQueue<T,next> *me, T *x);
 template<typename T, T *T::*next>
+void ncclIntruQueueEnqueueFront(ncclIntruQueue<T,next> *me, T *x);
+template<typename T, T *T::*next>
 T* ncclIntruQueueDequeue(ncclIntruQueue<T,next> *me);
 template<typename T, T *T::*next>
 T* ncclIntruQueueTryDequeue(ncclIntruQueue<T,next> *me);
 template<typename T, T *T::*next>
-void ncclIntruQueueFreeAll(ncclIntruQueue<T,next> *me, ncclMemoryPool *memPool);
+void ncclIntruQueueTransfer(ncclIntruQueue<T,next> *dst, ncclIntruQueue<T,next> *src);
+
 
 ////////////////////////////////////////////////////////////////////////////////
 /* ncclThreadSignal: Couples a pthread mutex and cond together. The "mutex"
@@ -228,11 +233,28 @@ inline void* ncclMemoryStack::allocate(struct ncclMemoryStack* me, size_t size, 
   return obj;
 }
 
+inline void* ncclMemoryStackAlloc(struct ncclMemoryStack* me, size_t size, size_t align) {
+  void *obj = ncclMemoryStack::allocate(me, size, align);
+  memset(obj, 0, size);
+  return obj;
+}
+
 template<typename T>
 inline T* ncclMemoryStackAlloc(struct ncclMemoryStack* me, size_t n) {
   void *obj = ncclMemoryStack::allocate(me, n*sizeof(T), alignof(T));
   memset(obj, 0, n*sizeof(T));
   return (T*)obj;
+}
+
+template<typename Header, typename Element>
+inline Header* ncclMemoryStackAllocInlineArray(struct ncclMemoryStack* me, size_t nElt) {
+  size_t size = sizeof(Header);
+  size = (size + alignof(Element)-1) & -alignof(Element);
+  size += nElt*sizeof(Element);
+  size_t align = alignof(Header) < alignof(Element) ? alignof(Element) : alignof(Header);
+  void *obj = ncclMemoryStack::allocate(me, size, align);
+  memset(obj, 0, size);
+  return (Header*)obj;
 }
 
 inline void ncclMemoryStackPush(struct ncclMemoryStack* me) {
@@ -339,6 +361,13 @@ inline void ncclIntruQueueEnqueue(ncclIntruQueue<T,next> *me, T *x) {
 }
 
 template<typename T, T *T::*next>
+inline void ncclIntruQueueEnqueueFront(ncclIntruQueue<T,next> *me, T *x) {
+  if (me->head == nullptr) me->tail = x;
+  x->*next = me->head;
+  me->head = x;
+}
+
+template<typename T, T *T::*next>
 inline T* ncclIntruQueueDequeue(ncclIntruQueue<T,next> *me) {
   T *ans = me->head;
   me->head = ans->*next;
@@ -383,15 +412,11 @@ inline T* ncclIntruQueueTryDequeue(ncclIntruQueue<T,next> *me) {
 }
 
 template<typename T, T *T::*next>
-void ncclIntruQueueFreeAll(ncclIntruQueue<T,next> *me, ncclMemoryPool *pool) {
-  T *head = me->head;
-  me->head = nullptr;
-  me->tail = nullptr;
-  while (head != nullptr) {
-    T *tmp = head->*next;
-    ncclMemoryPoolFree(pool, tmp);
-    head = tmp;
-  }
+void ncclIntruQueueTransfer(ncclIntruQueue<T,next> *dst, ncclIntruQueue<T,next> *src) {
+  (dst->tail ? dst->tail->next : dst->head) = src->head;
+  if (src->tail) dst->tail = src->tail;
+  src->head = nullptr;
+  src->tail = nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

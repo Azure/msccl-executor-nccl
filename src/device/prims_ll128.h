@@ -35,7 +35,7 @@ class Primitives<T, RedOp, Fan, Direct, ProtoLL128, P2p>:
   uint64_t recvConnHead;
 
   struct ncclConnInfo* sendConn = NULL;
-  volatile int* sendConnFifoPtr = NULL;
+  volatile struct ncclConnFifo* sendConnFifo = NULL;
   volatile uint64_t* sendConnTailPtr = NULL;
   uint64_t sendConnTail;
   volatile uint64_t* sendConnHeadPtr = NULL;
@@ -71,7 +71,7 @@ private:
   inline __device__ uint64_t sendFlag(int i) { return sendStep[i]+1; }
 
   inline __device__ void barrier() {
-    asm volatile ("bar.sync %1, %0;" :: "r"(nthreads), "r"(15-group));
+    barrier_sync(15-group, nthreads);
   }
 
   uint32_t abort = 0;
@@ -99,8 +99,8 @@ private:
         sendConnHeadCache = *sendConnHeadPtr;
         if (checkAbort(spins, wid, 1)) break;
       }
-      if (sendConnFifoPtr) {
-        sendConnFifoPtr[sendStep[wid]%NCCL_STEPS] = nbytes;
+      if (sendConnFifo) {
+        sendConnFifo[sendStep[wid]%NCCL_STEPS].size = nbytes;
       }
       sendConnHead += 1;
     }
@@ -291,6 +291,8 @@ private:
         }
       }
 
+      // Yes, for some template arguments this code will be unreachable.  That's fine.
+      // coverity[dead_error_line]
       for (int i=1; i<MaxRecv && i<fan.nrecv(); i++) {
         uint64_t flag = recvFlag(i);
         uint64_t* ptr = recvPtr(i)+ll128Offset;
@@ -350,6 +352,8 @@ private:
 
     /************************ Send **************************/
     if (SEND) {
+      // Yes, for some template arguments this code will be unreachable.  That's fine.
+      // coverity[dead_error_line]
       for (int i=1; i<MaxSend && i<fan.nsend(); i++) {
         uint64_t flag = sendFlag(i);
         uint64_t* ptr = sendPtr(i)+ll128Offset;
@@ -554,10 +558,10 @@ private:
       sendConnHeadPtr = sendConn->head;
       sendConnHeadCache = *sendConnHeadPtr;
       sendConnHead = sendConn->step;
-      sendConnFifoPtr = sendConn->sizesFifo;
+      sendConnFifo = sendConn->connFifo;
     }
     if (tid >= nthreads-WARP_SIZE && wid<fan.nsend()) {
-      if (sendConn->sizesFifo) {
+      if (sendConn->connFifo) {
         sendConnTailPtr = sendConn->tail;
         sendConnTail = sendConn->step;
       }
@@ -568,7 +572,8 @@ public:
   __device__ Primitives(
       const int tid, const int nthreads, int const *recvPeers, int const *sendPeers,
       void const *inputBuf, void *outputBuf, uint64_t redOpArg, uint8_t group=0,
-      uint8_t connIndexRecv=0, uint8_t connIndexSend=0, struct ncclWorkElem* e = nullptr, int stepSize_=0
+      uint8_t connIndexRecv=0, uint8_t connIndexSend=0, struct ncclDevWorkColl* e = nullptr,
+      bool ipcReg = false, bool netReg = false, int stepSize_ = 0
     ):
     redOp(redOpArg),
     tid(tid), nthreads(nthreads), wid(tid%WARP_SIZE), warp(tid/WARP_SIZE),
@@ -586,7 +591,11 @@ public:
       nsend++;
     }
     this->fan = Fan(nrecv, nsend);
+    // Coverity reports recvConn and sendConn being possibly NULL at this point but that won't actually
+    // happen given the two "while" loops just above.
+    // coverity[var_deref_model:FALSE]
     loadRecvSync();
+    // coverity[var_deref_model:FALSE]
     loadSendSync();
     setDataPtrs(inputBuf, outputBuf);
   }

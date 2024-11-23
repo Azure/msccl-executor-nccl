@@ -7,15 +7,17 @@
 #include "channel.h"
 #include "param.h"
 #include "gdrwrap.h"
+#include "transport.h"
 
 ncclResult_t initChannel(struct ncclComm* comm, int channelId) {
   struct ncclChannel* channel = &comm->channels[channelId];
   if (channel->id != -1) return ncclSuccess;
 
   int nRanks = comm->nRanks;
-  int nPeers = nRanks + 1 /* Collnet */ + comm->localRanks /* NVLS */;
+  int nvlsRanks = comm->localRanks;
+  int nPeers = nRanks + 1 /* Collnet */ + nvlsRanks /* NVLS */;
   channel->id = channelId;
-  channel->workFifoSent = 0;
+  channel->workFifoProduced = 0;
 
   struct ncclSharedResources* sharedRes = comm->sharedRes;
 
@@ -73,10 +75,12 @@ ncclResult_t initNvlsChannel(struct ncclComm* comm, int channelId, struct ncclCo
 
   NCCLCHECK(ncclStrongStreamAcquireUncaptured(&sharedRes->deviceStream));
 
+  int nvlsRanks = comm->localRanks;
+
   if (share) {
     channel->nvlsPeers = parent->channels[channelId].nvlsPeers;
     channel->nvlsDevPeers = parent->channels[channelId].nvlsDevPeers;
-    for (int r = 0; r < comm->localRanks; ++r) {
+    for (int r = 0; r < nvlsRanks; ++r) {
       int tr = comm->topParentLocalRanks[r];
       uintptr_t addr = (uintptr_t)(parent->channels[channelId].nvlsDevPeers + tr);
       channel->peers[comm->nRanks + 1 + r] = parent->channels[channelId].nvlsPeers + tr;
@@ -85,9 +89,9 @@ ncclResult_t initNvlsChannel(struct ncclComm* comm, int channelId, struct ncclCo
       ncclAtomicRefCountIncrement(&parent->channels[channelId].nvlsPeers[tr].refCount);
     }
   } else {
-    NCCLCHECK(ncclCalloc(&channel->nvlsPeers, comm->localRanks));
-    NCCLCHECK(ncclCudaCallocAsync(&channel->nvlsDevPeers, comm->localRanks, sharedRes->deviceStream.cudaStream));
-    for (int r = 0; r < comm->localRanks; ++r) {
+    NCCLCHECK(ncclCalloc(&channel->nvlsPeers, nvlsRanks));
+    NCCLCHECK(ncclCudaCallocAsync(&channel->nvlsDevPeers, nvlsRanks, sharedRes->deviceStream.cudaStream));
+    for (int r = 0; r < nvlsRanks; ++r) {
       uintptr_t addr = (uintptr_t)(channel->nvlsDevPeers + r);
       channel->peers[comm->nRanks + 1 + r] = channel->nvlsPeers + r;
       NCCLCHECK(ncclCudaMemcpyAsync((uintptr_t*)(channel->devPeers + comm->nRanks + 1 + r), (uintptr_t*)&addr, 1, sharedRes->deviceStream.cudaStream));

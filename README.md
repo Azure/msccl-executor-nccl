@@ -85,6 +85,6 @@ Any use of third-party trademarks or logos are subject to those third-party's po
 
 ## Copyright
 
-All source code and accompanying documentation is copyright (c) 2015-2022, NVIDIA CORPORATION. All rights reserved.
+All source code and accompanying documentation is copyright (c) 2015-2024, NVIDIA CORPORATION. All rights reserved.
 
-All modifications are copyright (c) 2022-2023, Microsoft Corporation. All rights reserved.
+All modifications are copyright (c) 2022-2024, Microsoft Corporation. All rights reserved.

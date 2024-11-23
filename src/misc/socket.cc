@@ -34,7 +34,7 @@ static ncclResult_t socketProgressOpt(int op, struct ncclSocket* sock, void* ptr
       }
     }
     (*offset) += bytes;
-    if (sock->abortFlag && *sock->abortFlag != 0) {
+    if (sock->abortFlag && __atomic_load_n(sock->abortFlag, __ATOMIC_ACQUIRE)) {
       INFO(NCCL_NET, "socketProgressOpt: abort called");
       return ncclInternalError;
     }
@@ -284,6 +284,7 @@ ncclResult_t ncclSocketGetAddrFromString(union ncclSocketAddress* ua, const char
       sin6.sin6_scope_id = 0;                          // should be global scope, set to 0
     } else {
       WARN("Net : unsupported IP family");
+      freeaddrinfo(p);
       return ncclInvalidArgument;
     }
 
@@ -408,7 +409,7 @@ ncclResult_t ncclSocketGetAddr(struct ncclSocket* sock, union ncclSocketAddress*
 
 static ncclResult_t socketTryAccept(struct ncclSocket* sock) {
   socklen_t socklen = sizeof(union ncclSocketAddress);
-  sock->fd = accept(sock->acceptFd, &sock->addr.sa, &socklen);
+  sock->fd = accept(sock->acceptFd, (struct sockaddr*)&sock->addr, &socklen);
   if (sock->fd != -1) {
     sock->state = ncclSocketStateAccepted;
   } else if (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -501,8 +502,9 @@ static ncclResult_t socketPollConnect(struct ncclSocket* sock) {
   } else if (ret < 0) {
     WARN("socketPollConnect poll() failed with error %s", strerror(errno));
     return ncclRemoteError;
-  } else {
-    EQCHECK(ret == 1 && (pfd.revents & POLLOUT), 0);
+  } else if (ret != 1 || (pfd.revents & POLLOUT) == 0) {
+    WARN("socketPollConnect poll() returned %d%s", ret, (pfd.revents & POLLOUT) ? "" : ", no POLLOUT events");
+    return ncclSystemError;
   }
 
   /* check socket status */
@@ -529,6 +531,8 @@ static ncclResult_t socketPollConnect(struct ncclSocket* sock) {
     sock->state = ncclSocketStateConnecting;
   } else if (ret != EINPROGRESS) {
     sock->state = ncclSocketStateError;
+    char line[SOCKET_NAME_MAXLEN+1];
+    WARN("socketPollConnect: Connect to %s returned %d(%s) errno %d(%s)", ncclSocketToString(&sock->addr, line), ret, strerror(ret), errno, strerror(errno));
     return ncclSystemError;
   }
   return ncclSuccess;
@@ -618,12 +622,12 @@ ncclResult_t ncclSocketConnect(struct ncclSocket* sock) {
   do {
     NCCLCHECK(socketProgressState(sock));
   } while (sock->asyncFlag == 0 &&
-      (sock->abortFlag == NULL || *sock->abortFlag == 0) &&
+      (sock->abortFlag == NULL || __atomic_load_n(sock->abortFlag, __ATOMIC_ACQUIRE) == 0) &&
       (sock->state == ncclSocketStateConnecting ||
        sock->state == ncclSocketStateConnectPolling ||
        sock->state == ncclSocketStateConnected));
 
-  if (sock->abortFlag && *sock->abortFlag != 0) return ncclInternalError;
+  if (sock->abortFlag && __atomic_load_n(sock->abortFlag, __ATOMIC_ACQUIRE)) return ncclInternalError;
 
   switch (sock->state) {
     case ncclSocketStateConnecting:
@@ -665,11 +669,11 @@ ncclResult_t ncclSocketAccept(struct ncclSocket* sock, struct ncclSocket* listen
   do {
     NCCLCHECKGOTO(socketProgressState(sock), ret, exit);
   } while (sock->asyncFlag == 0 &&
-      (sock->abortFlag == NULL || *sock->abortFlag == 0) &&
+      (sock->abortFlag == NULL || __atomic_load_n(sock->abortFlag, __ATOMIC_ACQUIRE) == 0) &&
       (sock->state == ncclSocketStateAccepting ||
        sock->state == ncclSocketStateAccepted));
 
-  if (sock->abortFlag && *sock->abortFlag != 0) return ncclInternalError;
+  if (sock->abortFlag && __atomic_load_n(sock->abortFlag, __ATOMIC_ACQUIRE)) return ncclInternalError;
 
   switch (sock->state) {
     case ncclSocketStateAccepting:
@@ -732,13 +736,17 @@ ncclResult_t ncclSocketInit(struct ncclSocket* sock, union ncclSocketAddress* ad
   /* Set socket as non-blocking if async or if we need to be able to abort */
   if ((sock->asyncFlag || sock->abortFlag) && sock->fd >= 0) {
     int flags;
-    EQCHECKGOTO(flags = fcntl(sock->fd, F_GETFL), -1, ret, fail);
-    SYSCHECKGOTO(fcntl(sock->fd, F_SETFL, flags | O_NONBLOCK), ret, fail);
+    SYSCHECKGOTO(flags = fcntl(sock->fd, F_GETFL), "fcntl", ret, fail);
+    SYSCHECKGOTO(fcntl(sock->fd, F_SETFL, flags | O_NONBLOCK), "fcntl", ret, fail);
   }
 
 exit:
   return ret;
 fail:
+  if (sock->fd != -1) {
+    close(sock->fd);
+    sock->fd = -1;
+  }
   goto exit;
 }
 
@@ -787,6 +795,24 @@ ncclResult_t ncclSocketRecv(struct ncclSocket* sock, void* ptr, int size) {
   NCCLCHECK(socketWait(NCCL_SOCKET_RECV, sock, ptr, size, &offset));
   return ncclSuccess;
 }
+
+ncclResult_t ncclSocketSendRecv(struct ncclSocket* sendSock, void* sendPtr, int sendSize, struct ncclSocket* recvSock, void* recvPtr, int recvSize) {
+  int sendOffset = 0, recvOffset = 0;
+  if (sendSock == NULL || recvSock == NULL) {
+    WARN("ncclSocketSendRecv: invalid socket %p/%p", sendSock, recvSock);
+    return ncclInternalError;
+  }
+  if (sendSock->state != ncclSocketStateReady || recvSock->state != ncclSocketStateReady) {
+    WARN("ncclSocketSendRecv: socket state (%d/%d) is not ready", sendSock->state, recvSock->state);
+    return ncclInternalError;
+  }
+  while (sendOffset < sendSize || recvOffset < recvSize) {
+    if (sendOffset < sendSize) NCCLCHECK(socketProgress(NCCL_SOCKET_SEND, sendSock, sendPtr, sendSize, &sendOffset));
+    if (recvOffset < recvSize) NCCLCHECK(socketProgress(NCCL_SOCKET_RECV, recvSock, recvPtr, recvSize, &recvOffset));
+  }
+  return ncclSuccess;
+}
+
 
 // Receive or detect connection closed
 ncclResult_t ncclSocketTryRecv(struct ncclSocket* sock, void* ptr, int size, int* closed, bool blocking) {
