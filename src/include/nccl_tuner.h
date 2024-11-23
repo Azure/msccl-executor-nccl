@@ -73,7 +73,7 @@ typedef struct {
   //   - context: tuner context object
   ncclResult_t (*init)(size_t nRanks, size_t nNodes, ncclDebugLogger_t logFunction, void **context);
 
-  // Gets info (algo, protocol, number of ctas and threads) for a give collective.
+  // Gets info (algo, protocol, number of ctas and threads) for a given collective.
   // Inputs:
   //   - context: tuner context object
   //   - collType: collective type , e.g., allreduce, allgather…
@@ -84,7 +84,7 @@ typedef struct {
   //
   // Outputs:
   //   - algorithm: selected algorithm to be used for the given collective
-  //   - protocol: selected protocol to be used for the given collective
+  //   - protocol: selected protocol to be used for the give collective
   //   - nChannels: number of channels (hence SMs) to be used.
   //
   // If getCollInfo() does not return ncclSuccess, NCCL will fall back to the
