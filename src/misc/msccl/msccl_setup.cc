@@ -116,7 +116,7 @@ ncclResult_t mscclSetupConnections(struct mscclAlgo* hostAlgo, ncclComm_t comm) 
   mscclSetIsCallerFlag();
   int highestTransportType = TRANSPORT_P2P;
   bool needsProxy = false;
-  NCCLCHECK(ncclTransportP2pSetup(comm, NULL, 0, &highestTransportType));
+  NCCLCHECK(ncclTransportP2pSetup(comm, NULL, 0, &highestTransportType, &needsProxy));
   status.needsFence |= highestTransportType > TRANSPORT_P2P;
   status.needsProxy |= needsProxy;
   mscclClearIsCallerFlag();
