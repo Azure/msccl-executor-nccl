@@ -12,10 +12,10 @@
 #include "collectives.h"
 #include "gdrwrap.h"
 #include "shmutils.h"
-#include "transport.h"
-#include "shm.h"
 #include "p2p.h"
 #include "profiler.h"
+#include "transport.h"
+#include "shm.h"
 #include "msccl/msccl_lifecycle.h"
 
 #if defined(ENABLE_NPKIT)
@@ -207,9 +207,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
 static ncclResult_t sendSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclConnect* connectInfo, struct ncclConnector* send, int channelId, int connIndex) {
   struct setupReq req = { 0 };
 
-  int tpProxyRank;
-  send->conn.shared = req.shared = (graph || (mscclAvailable() && mscclIsCaller()) || connIndex == 0) ? 0 : ncclParamNetSharedBuffers() != -2 ? ncclParamNetSharedBuffers() : 1;
-
+  send->conn.shared = req.shared = (graph || mscclIsCaller() || connIndex == 0) ? 0 : ncclParamNetSharedBuffers() != -2 ? ncclParamNetSharedBuffers() : 1;
   req.channelId = channelId;
   req.connIndex = connIndex;
 
@@ -250,7 +248,7 @@ NCCL_PARAM(GdrCopyFlushEnable, "GDRCOPY_FLUSH_ENABLE", 0);
 static ncclResult_t recvSetup(struct ncclComm* comm, struct ncclTopoGraph* graph, struct ncclPeerInfo* myInfo, struct ncclPeerInfo* peerInfo, struct ncclConnect* connectInfo, struct ncclConnector* recv, int channelId, int connIndex) {
   struct setupReq req = { 0 };
 
-  recv->conn.shared = req.shared = (graph || (mscclAvailable() && mscclIsCaller()) || connIndex == 0) ? 0 : ncclParamNetSharedBuffers() != -2 ? ncclParamNetSharedBuffers() : 1;
+  recv->conn.shared = req.shared = (graph || mscclIsCaller() || connIndex == 0) ? 0 : ncclParamNetSharedBuffers() != -2 ? ncclParamNetSharedBuffers() : 1;
   req.channelId = channelId;
   req.connIndex = connIndex;
 
@@ -1380,7 +1378,6 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
       int sizes[NCCL_PROXY_MAX_SUBS];
       int tags[NCCL_PROXY_MAX_SUBS];
       void* mhandles[NCCL_PROXY_MAX_SUBS];
-
       for (int i=0; i<subGroup->groupSize; i++) {
         struct ncclProxySubArgs* sub = subGroup + i;
         if (sub->posted < sub->nsteps) {
@@ -1600,9 +1597,8 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
               if (sub->reg) {
                 // We may have added more net steps, but reg operations only have a single step w.r.t. the GPU.
                 if (sub->transmitted == sub->nsteps) *recvTail = sub->base + args->sliceSteps;
-              } else {
+              } else
                 *recvTail = sub->base + sub->transmitted;
-              }
               if (resources->gdcSync) wc_store_fence(); // Flush out WC write
             }
           }

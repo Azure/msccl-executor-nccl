@@ -1231,7 +1231,11 @@ static ncclResult_t initTransportsRank(struct ncclComm* comm, struct ncclComm* p
     mscclNeedsProxy |= needsProxy;
 
     // Connect PAT only for communicators with 1 GPU per node
-    if (comm->maxLocalRanks == 1) NCCLCHECKGOTO(ncclTransportPatConnect(comm), ret, fail);
+    if (comm->maxLocalRanks == 1) {
+        NCCLCHECKGOTO(ncclTransportPatConnect(comm, &highestTransportType, &needsProxy), ret, fail);
+        mscclHighestTransportType = std::max(mscclHighestTransportType, highestTransportType);
+        mscclNeedsProxy |= needsProxy;
+    }
 
     // Setup NVLS
     NCCLCHECKGOTO(ncclNvlsSetup(comm, parent), ret, fail);

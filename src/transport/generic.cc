@@ -35,7 +35,7 @@ fail:
   goto exit;
 }
 
-ncclResult_t ncclTransportPatConnect(struct ncclComm* comm) {
+ncclResult_t ncclTransportPatConnect(struct ncclComm* comm, int* highestTransportType/*=NULL*/, bool* needsProxy/*=NULL*/) {
   ncclResult_t ret = ncclSuccess;
   if (comm && comm->nRanks > 1) {
     for (int mask=1; mask<comm->nRanks; mask<<=1) {
@@ -48,7 +48,7 @@ ncclResult_t ncclTransportPatConnect(struct ncclComm* comm) {
       for (int c = 0; c < comm->nChannels; c++) {
         NCCLCHECKGOTO(ncclTransportP2pConnect(comm, c, 1, &nextPeer, 1, &prevPeer, 0), ret, fail); // AllGather
       }
-      NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &comm->graphs[NCCL_ALGO_TREE], 0), ret, fail);
+      NCCLCHECKGOTO(ncclTransportP2pSetup(comm, &comm->graphs[NCCL_ALGO_TREE], 0, highestTransportType, needsProxy), ret, fail);
     }
     INFO(NCCL_INIT, "Connected binomial trees");
   }
