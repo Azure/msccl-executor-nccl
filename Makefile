@@ -10,7 +10,6 @@ install : src.install
 BUILDDIR ?= $(abspath ./build)
 ABSBUILDDIR := $(abspath $(BUILDDIR))
 TARGETS := src pkg
-MSCCL_MAX_NUM_STEPS ?= 64  # Default value for dynamic number of instructions
 clean: ${TARGETS:%=%.clean}
 test.build: src.build
 LICENSE_FILES := LICENSE.txt
@@ -23,10 +22,10 @@ ${BUILDDIR}/%.txt: %.txt
 	cp $< $@
 
 src.%:
-	${MAKE} -C src $* BUILDDIR=${ABSBUILDDIR} MSCCL_MAX_NUM_STEPS=${MSCCL_MAX_NUM_STEPS}
+	${MAKE} -C src $* BUILDDIR=${ABSBUILDDIR}
 
 pkg.%:
-	${MAKE} -C pkg $* BUILDDIR=${ABSBUILDDIR} MSCCL_MAX_NUM_STEPS=${MSCCL_MAX_NUM_STEPS}
+	${MAKE} -C pkg $* BUILDDIR=${ABSBUILDDIR}
 
 
 pkg.debian.prep: lic

@@ -15,6 +15,7 @@ TRACE ?= 0
 PROFAPI ?= 1
 NVTX ?= 1
 RDMA_CORE ?= 0
+MSCCL_MAX_NUM_STEPS ?= 64  # Default value for dynamic number of instructions
 
 NVCC = $(CUDA_HOME)/bin/nvcc
 
@@ -125,4 +126,9 @@ endif
 
 ifneq ($(RDMA_CORE), 0)
 CXXFLAGS += -DNCCL_BUILD_RDMA_CORE=1
+endif
+
+ifdef MSCCL_MAX_NUM_STEPS
+CXXFLAGS += -DMSCCL_MAX_NUM_STEPS=$(MSCCL_MAX_NUM_STEPS)
+NVCUFLAGS += -DMSCCL_MAX_NUM_STEPS=$(MSCCL_MAX_NUM_STEPS)
 endif
