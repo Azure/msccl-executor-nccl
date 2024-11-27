@@ -9,6 +9,8 @@ MSCCL-EXECUTOR-NCCL is a stand-alone library of standard communication routines 
 - Programmibility: Inter-connection among accelerators have different latencies and bandwidths. Therefore, a generic collective communication algorithm does not necessarily well for all topologies and buffer sizes. MSCCL-EXECUTOR-NCCL allows a user to write a hyper-optimized collective communication algorithm for a given topology and a buffer size. This is possbile through two main components: [MSCCL toolkit](https://github.com/microsoft/msccl-tools) and [MSCCL-EXECUTOR-NCCL](https://github.com/Azure/msccl-executor-nccl) (this repo). MSCCL toolkit contains a high-level DSL (MSCCLang) and a compiler which generate an IR for the MSCCL runtime (this repo) to run on the backend. MSCCL will automatically fall back to a NCCL's generic algorithm in case there is no custom algorithm. [Example](#Example) provides some instances on how MSCCL toolkit with the runtime works. Please refer to [MSCCL toolkit](https://github.com/microsoft/msccl-tools) for more information.
 - Profiling: MSCCL-EXECUTOR-NCCL has a profiling tool [NPKit](https://github.com/microsoft/npkit) which provides detailed timeline for each primitive send and receive operation to understand the bottlenecks in a given collective communication algorithms.
 
+**Please note:** MSCCL customized algorithms and NPKit only support single GPU per process mode.
+
 ## Build
 
 To build the library :
