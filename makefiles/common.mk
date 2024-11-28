@@ -16,6 +16,7 @@ PROFAPI ?= 1
 NVTX ?= 1
 RDMA_CORE ?= 0
 ENABLE_PRECISION_CLIPPING_HALF ?= 0 # Flag to enable precision flag for half, set 1 to enable, 0 to disable
+MSCCL_MAX_NUM_STEPS ?= 64  # Default value for dynamic number of instructions
 
 NVCC = $(CUDA_HOME)/bin/nvcc
 
@@ -130,4 +131,9 @@ endif
 
 ifdef ENABLE_PRECISION_CLIPPING_HALF
 NVCUFLAGS += -DENABLE_PRECISION_CLIPPING_HALF=$(ENABLE_PRECISION_CLIPPING_HALF)
+endif
+
+ifdef MSCCL_MAX_NUM_STEPS
+CXXFLAGS += -DMSCCL_MAX_NUM_STEPS=$(MSCCL_MAX_NUM_STEPS)
+NVCUFLAGS += -DMSCCL_MAX_NUM_STEPS=$(MSCCL_MAX_NUM_STEPS)
 endif
