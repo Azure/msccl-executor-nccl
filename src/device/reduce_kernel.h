@@ -266,11 +266,19 @@ SPECIALIZE_REDUCE(FuncMinMax, float, 1, float, fn.isMinNotMax ? fminf(x, y) : fm
 SPECIALIZE_REDUCE(FuncMinMax, double, 1, double, fn.isMinNotMax ? fmin(x, y) : fmax(x, y))
 
 #if __CUDA_ARCH__ >= 530 && __CUDA_ARCH__ != 610
+#if __CUDA_ARCH__ >= 800 && ENABLE_PRECISION_CLIPPING_HALF == 1
+  SPECIALIZE_REDUCE(FuncSum, half, 1, half,  __hmin(__hmax(__hadd(x, y), __half(-65504.0f)), __half(65504.0f)))
+#else
   SPECIALIZE_REDUCE(FuncSum, half, 1, half, __hadd(x, y))
+#endif
   // Coverity recommends the use of std::move here but, given that half is a scalar,
   // a plain copy will be just as efficient.
   // coverity[copy_constructor_call]
+#if __CUDA_ARCH__ >= 800 && ENABLE_PRECISION_CLIPPING_HALF == 1
+  SPECIALIZE_REDUCE(FuncSum, half, 2, half2,  __hmin2(__hmax2(__hadd2(x, y), __halves2half2(-65504.0f, -65504.0f)), __halves2half2(65504.0f, 65504.0f)))
+#else
   SPECIALIZE_REDUCE(FuncSum, half, 2, half2, __hadd2(x, y))
+#endif
   SPECIALIZE_REDUCE(FuncProd, half, 1, half, __hmul(x, y))
   // coverity[copy_constructor_call]
   SPECIALIZE_REDUCE(FuncProd, half, 2, half2, __hmul2(x, y))
