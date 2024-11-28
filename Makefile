@@ -10,7 +10,6 @@ install : src.install
 BUILDDIR ?= $(abspath ./build)
 ABSBUILDDIR := $(abspath $(BUILDDIR))
 TARGETS := src pkg
-ENABLE_PRECISION_CLIPPING_HALF ?= 0 # Flag to enable precision flag for half, set 1 to enable, 0 to disable
 clean: ${TARGETS:%=%.clean}
 test.build: src.build
 LICENSE_FILES := LICENSE.txt
@@ -23,10 +22,10 @@ ${BUILDDIR}/%.txt: %.txt
 	cp $< $@
 
 src.%:
-	${MAKE} -C src $* BUILDDIR=${ABSBUILDDIR} ENABLE_PRECISION_CLIPPING_HALF=${ENABLE_PRECISION_CLIPPING_HALF}
+	${MAKE} -C src $* BUILDDIR=${ABSBUILDDIR}
 
 pkg.%:
-	${MAKE} -C pkg $* BUILDDIR=${ABSBUILDDIR} ENABLE_PRECISION_CLIPPING_HALF=${ENABLE_PRECISION_CLIPPING_HALF}
+	${MAKE} -C pkg $* BUILDDIR=${ABSBUILDDIR}
 
 pkg.debian.prep: lic
 pkg.txz.prep: lic
