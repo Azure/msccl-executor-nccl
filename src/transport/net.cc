@@ -1277,7 +1277,7 @@ static ncclResult_t sendProxyProgress(struct ncclProxyState* proxyState, struct 
           }
           if (g_npkit_num_warmup_ops == 0 && npKitSendDuration > g_npkit_net_check_latency_threshold_us) {
             fprintf(stdout, "NPKIT LONG SEND (R:%d,P:%d,C:%d,S:%d): %d took %lu us, last/max/sum poll interval %lu/%lu/%lu us, cnt: %lu, ts: %lu/%lu\n",
-                    comm->rank, sub->peer, sub->channelId, buffSlot, sub->npKitSizesFifo[buffSlot], npKitSendDuration, sub->npKitLastPollInterval[buffSlot], sub->npKitMaxPollInterval[buffSlot], sub->npKitPollIntervalSum[buffSlot], sub->npKitPollCnt[buffSlot], sub->npKitStartTime[buffSlot], sub->npKitLastPollTime[buffSlot]);
+                    proxyState->tpRank, sub->peer, sub->channelId, buffSlot, sub->npKitSizesFifo[buffSlot], npKitSendDuration, sub->npKitLastPollInterval[buffSlot], sub->npKitMaxPollInterval[buffSlot], sub->npKitPollIntervalSum[buffSlot], sub->npKitPollCnt[buffSlot], sub->npKitStartTime[buffSlot], sub->npKitLastPollTime[buffSlot]);
             sub->npKitStartTime[buffSlot] = sub->npKitLastPollTime[buffSlot] = npKitGetTsInUs();
             sub->npKitMaxPollInterval[buffSlot] = sub->npKitPollIntervalSum[buffSlot] = sub->npKitPollCnt[buffSlot] = 0;
           }
@@ -1506,7 +1506,7 @@ static ncclResult_t recvProxyProgress(struct ncclProxyState* proxyState, struct 
             uint64_t npKitRecvDuration = sub->npKitLastPollTime[step%NCCL_STEPS] - sub->npKitStartTime[step%NCCL_STEPS];
             if (g_npkit_num_warmup_ops == 0 && npKitRecvDuration > g_npkit_net_check_latency_threshold_us) {
               fprintf(stdout, "NPKIT LONG RECV (R:%d,P:%d,C:%d,S:%lu): %d took %lu us, last/max/sum poll interval %lu/%lu/%lu us, cnt: %lu, ts: %lu/%lu\n",
-                      comm->rank, sub->peer, sub->channelId, step%NCCL_STEPS, sizes[i], npKitRecvDuration, sub->npKitLastPollInterval[step%NCCL_STEPS], sub->npKitMaxPollInterval[step%NCCL_STEPS], sub->npKitPollIntervalSum[step%NCCL_STEPS], sub->npKitPollCnt[step%NCCL_STEPS], sub->npKitStartTime[step%NCCL_STEPS], sub->npKitLastPollTime[step%NCCL_STEPS]);
+                      proxyState->tpRank, sub->peer, sub->channelId, step%NCCL_STEPS, sizes[i], npKitRecvDuration, sub->npKitLastPollInterval[step%NCCL_STEPS], sub->npKitMaxPollInterval[step%NCCL_STEPS], sub->npKitPollIntervalSum[step%NCCL_STEPS], sub->npKitPollCnt[step%NCCL_STEPS], sub->npKitStartTime[step%NCCL_STEPS], sub->npKitLastPollTime[step%NCCL_STEPS]);
               sub->npKitStartTime[step%NCCL_STEPS] = sub->npKitLastPollTime[step%NCCL_STEPS] = npKitGetTsInUs();
               sub->npKitMaxPollInterval[step%NCCL_STEPS] = sub->npKitPollIntervalSum[step%NCCL_STEPS] = sub->npKitPollCnt[step%NCCL_STEPS] = 0;
             }
