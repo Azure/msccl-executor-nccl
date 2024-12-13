@@ -13,7 +13,7 @@ jobs:
   strategy:
     matrix:
       cuda12:
-        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.2
+        containerImage: ghcr.io/microsoft/mscclpp/mscclpp:base-dev-cuda12.4
 
   pool:
     name: mscclpp
@@ -30,11 +30,11 @@ jobs:
       script: |
         make -j src.build CUDA_HOME=/usr/local/cuda-12 NVCC_GENCODE="-gencode=arch=compute_80,code=sm_80"
         export MSCCL_EXECUTOR_BUILD_PATH=$(pwd)/build
+        git clone https://github.com/Azure/msccl-scheduler.git
         git clone https://github.com/Azure/msccl-tests-nccl.git
         cd msccl-tests-nccl
         export PATH=/usr/local/mpi/bin:$PATH
         make MPI=1 MPI_HOME=/usr/local/mpi CUDA_HOME=/usr/local/cuda-12 NCCL_HOME=$MSCCL_EXECUTOR_BUILD_PATH -j
-        export NCCL_TESTS_PATH=$(pwd)
       workingDirectory: '$(System.DefaultWorkingDirectory)'
 
   - task: Bash@3
@@ -104,6 +104,72 @@ jobs:
       script: |
         set -e
         export PATH=/usr/local/mpi/bin:$PATH
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/reduce_scatter_perf -b 1K -e 1G -f 2 -o output.jsonl
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/reduce_scatter_perf -b 1K -e 1G -f 2 -d half -o output.jsonl
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/reduce_scatter_perf -b 1K -e 1G -f 2 -d fp8_e4m3 -o output.jsonl
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/reduce_scatter_perf -b 1K -e 1G -f 2 -d fp8_e5m2 -o output.jsonl
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: AllGatherTestWithAlgorithm
+    displayName: Run msccl AllGather test with MSCCL algorithm XML
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
+        export MSCCL_ALGO_DIR=$(pwd)/msccl-scheduler/tools/msccl-algorithms/ndv4
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/all_gather_perf -b 1K -e 1G -f 2 -o output.jsonl
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: SendRecvTestWithAlgorithm
+    displayName: Run msccl SendRecv test with MSCCL algorithm XML
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
+        export MSCCL_ALGO_DIR=$(pwd)/msccl-scheduler/tools/msccl-algorithms/ndv4
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/sendrecv_perf -b 1K -e 1G -f 2 -o output.jsonl
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: AllReduceTestWithAlgorithm
+    displayName: Run msccl AllReduce test with MSCCL algorithm XML
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
+        export MSCCL_ALGO_DIR=$(pwd)/msccl-scheduler/tools/msccl-algorithms/ndv4
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/all_reduce_perf -b 1K -e 1G -f 2 -o output.jsonl
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/all_reduce_perf -b 1K -e 1G -f 2 -d half -o output.jsonl
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/all_reduce_perf -b 1K -e 1G -f 2 -d fp8_e4m3 -o output.jsonl
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/all_reduce_perf -b 1K -e 1G -f 2 -d fp8_e5m2 -o output.jsonl
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: AllToAllTestWithAlgorithm
+    displayName: Run msccl AllToAll test with MSCCL algorithm XML
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
+        export MSCCL_ALGO_DIR=$(pwd)/msccl-scheduler/tools/msccl-algorithms/ndv4
+        mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/alltoall_perf -b 1K -e 1G -f 2 -o output.jsonl
+      workingDirectory: '$(System.DefaultWorkingDirectory)'
+
+  - task: Bash@3
+    name: ReduceScatterTestWithAlgorithm
+    displayName: Run msccl ReduceScatter test with MSCCL algorithm XML
+    inputs:
+      targetType: 'inline'
+      script: |
+        set -e
+        export PATH=/usr/local/mpi/bin:$PATH
+        export MSCCL_ALGO_DIR=$(pwd)/msccl-scheduler/tools/msccl-algorithms/ndv4
         mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/reduce_scatter_perf -b 1K -e 1G -f 2 -o output.jsonl
         mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/reduce_scatter_perf -b 1K -e 1G -f 2 -d half -o output.jsonl
         mpirun --allow-run-as-root -np 8 -x LD_LIBRARY_PATH=$(pwd)/build/lib:$LD_LIBRARY_PATH -x NCCL_DEBUG=WARN -x NCCL_DEBUG_SUBSYS=INIT,ENV -x NCCL_MSCCL_ENABLE=1 ./msccl-tests-nccl/build/reduce_scatter_perf -b 1K -e 1G -f 2 -d fp8_e4m3 -o output.jsonl
