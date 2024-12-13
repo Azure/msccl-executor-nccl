@@ -150,14 +150,18 @@ static ncclResult_t mscclInternalSchedulerInit(ncclComm_t comm, int* numChannels
     fullDirPath = mscclAlgoDir;
   }
   INFO(NCCL_INIT, "Using MSCCL Algo files from %s", fullDirPath);
+  std::set<std::string> sortedFullPaths;
   while ((entry = readdir(dp))) {
     if (entry->d_type != DT_LNK && entry->d_type != DT_REG) {
       continue;
     }
-    status.algoMetas.emplace_back();
     std::string fullPath = fullDirPath;
     fullPath += "/";
     fullPath += entry->d_name;
+    sortedFullPaths.insert(fullPath);
+  }
+  for (auto& fullPath : sortedFullPaths) {
+    status.algoMetas.emplace_back();
     NCCLCHECK(mscclGetAlgoMetaFromXmlFile(fullPath.c_str(), &(status.algoMetas.back())));
     if (status.algoMetas.back().nRanks == comm->nRanks) {
       *numChannelsRequired = std::max(*numChannelsRequired, status.algoMetas.back().nChannels);
